@@ -29,6 +29,7 @@ jobs:
 
       - name: Run tests
         run: python -m pytest test/ -v
+        timeout-minutes: 5
 
   build-webui:
     strategy:

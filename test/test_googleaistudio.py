@@ -87,11 +87,12 @@ async def test_translate_response_blocked():
 
 
 @pytest.mark.asyncio
-@patch("httpx.AsyncClient.stream")
-async def test_stream_text_and_tool(mock_stream):
+@patch("httpx.AsyncClient")
+async def test_stream_text_and_tool(mock_client_cls):
     from config.settings import settings
     settings.google_api_key = "dummy"
-    class MockResp:
+
+    class MockStreamResp:
         status_code = 200
         async def aread(self): return b""
         def raise_for_status(self): pass
@@ -100,11 +101,16 @@ async def test_stream_text_and_tool(mock_stream):
             yield 'data: {"candidates": [{"content": {"parts": [{"functionCall": {"name": "get_weather", "args": {"city": "Paris"}}}], "role": "model"}, "finishReason": "STOP"}], "usageMetadata": {"candidatesTokenCount": 5}}'
             yield 'data: [DONE]'
 
-    class MockCM:
-        async def __aenter__(self): return MockResp()
-        async def __aexit__(self, *a): pass
+    class MockStreamCM:
+        async def __aenter__(self): return MockStreamResp()
+        async def __aexit__(self, *a): return False
 
-    mock_stream.return_value = MockCM()
+    class MockClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def stream(self, *a, **kw): return MockStreamCM()
+
+    mock_client_cls.return_value = MockClient()
     p = GoogleAIStudioProvider(target_model="gemini-2.0-flash")
     events = []
     async for ev in p.stream({"contents": []}):
@@ -113,7 +119,6 @@ async def test_stream_text_and_tool(mock_stream):
     assert "message_start" in types
     assert "message_stop" in types
     assert any(e.data.get("delta", {}).get("stop_reason") == "tool_use" for e in events if e.event == "message_delta")
-    # tool_use block
     starts = [e for e in events if e.event == "content_block_start" and e.data.get("content_block", {}).get("type") == "tool_use"]
     assert len(starts) == 1
     assert starts[0].data["content_block"]["name"] == "get_weather"
