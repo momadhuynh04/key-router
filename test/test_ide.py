@@ -250,10 +250,14 @@ def test_api_hello():
 # 6. Browse Folder Endpoint
 # ----------------------------------------
 
-@patch("proxy.server.platform")
-def test_browse_folder_returns_path(mock_platform):
-    """Browse folder endpoint returns a path field (may be empty if no GUI)."""
+@patch("proxy.routers.management.platform")
+@patch("proxy.routers.management.asyncio.to_thread")
+def test_browse_folder_returns_path(mock_to_thread, mock_platform):
+    """Browse folder endpoint returns a path field without opening GUI (headless)."""
     mock_platform.system.return_value = "Headless"
+    async def _fake_to_thread(fn, *a, **kw):
+        return ""
+    mock_to_thread.side_effect = _fake_to_thread
     response = client.get("/api/browse-folder")
     assert response.status_code == 200
     data = response.json()
