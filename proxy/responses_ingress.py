@@ -1,7 +1,7 @@
 """
 OpenAI Responses API ingress (/v1/responses) — native protocol of Codex CLI.
 
-Codex (>= 0.149) removed support for wire_api = "chat", so freeClaude speaks
+Codex (>= 0.149) removed support for wire_api = "chat", so key-router speaks
 the Responses API directly:
 
   Responses request
@@ -13,6 +13,7 @@ the Responses API directly:
 
 import json
 import re
+from config.logging import log_warn
 import time
 import uuid
 from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
@@ -276,6 +277,8 @@ def responses_to_anthropic(req: ResponsesRequest) -> AnthropicRequest:
     if extra_tools.get("additional_tools"):
         pending_tools.extend(extra_tools["additional_tools"] or [])
 
+    pending_thinking: List[str] = []
+
     items = req.input
     if isinstance(items, str):
         add_user(items)
@@ -296,12 +299,20 @@ def responses_to_anthropic(req: ResponsesRequest) -> AnthropicRequest:
                     add_user(text)
 
             elif item_type == "function_call":
-                messages.append(Message(role="assistant", content=[{
+                thinking_blocks = []
+                if pending_thinking:
+                    for t in pending_thinking:
+                        thinking_blocks.append({"type": "thinking", "thinking": t})
+                    pending_thinking.clear()
+                blocks = []
+                blocks.extend(thinking_blocks)
+                blocks.append({
                     "type": "tool_use",
                     "id": item.get("call_id") or item.get("id") or _new_item_id("fc"),
                     "name": item.get("name", ""),
                     "input": _safe_arguments(item.get("arguments"))
-                }]))
+                })
+                messages.append(Message(role="assistant", content=blocks))
 
             elif item_type == "function_call_output":
                 output = item.get("output", "")
@@ -313,16 +324,44 @@ def responses_to_anthropic(req: ResponsesRequest) -> AnthropicRequest:
                     "content": output
                 }]))
 
+            elif item_type == "reasoning":
+                summary = item.get("summary") or item.get("text") or item.get("content") or ""
+                text = ""
+                if isinstance(summary, list) and summary and isinstance(summary[0], dict):
+                    text = summary[0].get("text","") or summary[0].get("summary","")
+                    if not text and "content" in item:
+                        c = item.get("content")
+                        text = c[0].get("text","") if isinstance(c, list) and c and isinstance(c[0], dict) else str(c) if isinstance(c, str) else ""
+                else:
+                    text = str(summary) if summary else ""
+                if not text:
+                    c2 = item.get("content", "")
+                    if isinstance(c2, list) and c2:
+                        text = c2[0].get("text","") if isinstance(c2[0], dict) else str(c2[0])
+                    elif isinstance(c2, str):
+                        text = c2
+                if text and text.strip():
+                    pending_thinking.append(text)
             elif item_type == "additional_tools":
                 pending_tools.extend(item.get("tools", []) or [])
+            else:
+                if pending_thinking:
+                    for t in pending_thinking:
+                        messages.append(Message(role="assistant", content=[{"type": "thinking", "thinking": t}]))
+                    pending_thinking.clear()
 
-            # reasoning / web_search_call / local_shell_call / ... → ignored
+            # other types → flush orphan thinking above, ignored
+
+    if pending_thinking:
+        for t in pending_thinking:
+            messages.append(Message(role="assistant", content=[{"type": "thinking", "thinking": t}]))
+        pending_thinking.clear()
 
     all_tools: List[Dict[str, Any]] = []
     all_tools.extend(req.tools or [])
     all_tools.extend(pending_tools)
 
-    max_tokens = req.max_output_tokens or 4096
+    max_tokens = req.max_output_tokens
 
     effort = (req.reasoning or {}).get("effort")
 
@@ -377,6 +416,8 @@ def _content_blocks_to_output_items(content: List[Dict[str, Any]]) -> List[Dict[
 
     for block in content:
         block_type = block.get("type")
+        if block_type == "thinking":
+            continue
         if block_type == "text" and block.get("text"):
             text_buffer.append(block["text"])
         elif block_type == "tool_use":
@@ -404,7 +445,6 @@ def anthropic_response_to_responses_object(
 
     output = _content_blocks_to_output_items(resp.content)
 
-    # Rescue pass: weak models sometimes write tool calls as plain text.
     if tool_schemas and not any(i["type"] == "function_call" for i in output):
         full_text = "\n".join(
             part["text"]
@@ -421,15 +461,17 @@ def anthropic_response_to_responses_object(
                 "status": "completed"
             })
 
-    # Truncated generations must be surfaced as incomplete, not completed —
-    # otherwise the client believes the turn finished normally.
     truncated = resp.stop_reason in ("max_tokens", "length")
+    empty_no_tool = len(output) == 1 and output[0]["type"] == "message" and not output[0]["content"][0]["text"].strip() and tool_schemas
+    if truncated or empty_no_tool:
+        if empty_no_tool:
+            log_warn(f"[⚠️] Empty output with tools offered — marking incomplete (likely truncated)")
 
     response = {
         "id": response_id or _new_item_id("resp"),
         "object": "response",
         "created_at": int(time.time()),
-        "status": "incomplete" if truncated else "completed",
+        "status": "incomplete" if (truncated or empty_no_tool) else "completed",
         "model": requested_model,
         "output": output,
         "parallel_tool_calls": True,
@@ -443,7 +485,7 @@ def anthropic_response_to_responses_object(
             "output_tokens_details": {"reasoning_tokens": 0},
         },
     }
-    if truncated:
+    if truncated or empty_no_tool:
         response["incomplete_details"] = {"reason": "max_output_tokens"}
     return response
 
@@ -490,13 +532,13 @@ class _ResponsesStreamState:
             "usage": None,
         }
 
-    def final_response(self) -> Dict[str, Any]:
+    def final_response(self, status: str = "completed") -> Dict[str, Any]:
         total = self.prompt_tokens + self.completion_tokens
         return {
             "id": self.response_id,
             "object": "response",
             "created_at": self.created_at,
-            "status": "completed",
+            "status": status,
             "model": self.model,
             "output": self.collected_items,
             "usage": {
@@ -535,6 +577,8 @@ async def anthropic_events_to_responses_stream(
         elif event_type == "content_block_start":
             block = data.get("content_block", {})
             block_type = block.get("type")
+            if block_type == "thinking":
+                continue
             index = state.next_output_index()
 
             if block_type == "text":
@@ -576,6 +620,8 @@ async def anthropic_events_to_responses_stream(
         elif event_type == "content_block_delta":
             delta = data.get("delta", {})
             delta_type = delta.get("type")
+            if delta_type == "thinking_delta":
+                continue
             index = state.output_index
 
             if delta_type == "text_delta":
@@ -597,6 +643,8 @@ async def anthropic_events_to_responses_stream(
                 }); seq += 1
 
         elif event_type == "content_block_stop":
+            if state.item_type is None and state.output_index == -1:
+                continue
             index = state.output_index
 
             if state.item_type == "message":
@@ -641,6 +689,10 @@ async def anthropic_events_to_responses_stream(
         elif event_type == "message_delta":
             state.completion_tokens = data.get("usage", {}).get(
                 "output_tokens", state.completion_tokens)
+            # remember upstream truncation so we can surface incomplete
+            sr = data.get("delta", {}).get("stop_reason")
+            if sr in ("max_tokens", "length"):
+                state._truncated = True  # type: ignore
 
         elif event_type == "error":
             yield _sse("response.failed", {
@@ -695,10 +747,19 @@ async def anthropic_events_to_responses_stream(
             }); seq += 1
             state.collected_items.append(done_item)
 
+    truncated = bool(getattr(state, "_truncated", False))
+    # empty output with tools = likely truncation even if no explicit flag
+    if not truncated and state.tool_schemas and not state.collected_items:
+        truncated = True
+    status = "incomplete" if truncated else "completed"
+    final = state.final_response(status=status)
+    if truncated:
+        final["incomplete_details"] = {"reason": "max_output_tokens"}
+        log_warn(f"[⚠️] Responses stream truncated — surfacing incomplete")
     yield _sse("response.completed", {
         "type": "response.completed",
         "sequence_number": seq,
-        "response": state.final_response(),
+        "response": final,
     })
 
 

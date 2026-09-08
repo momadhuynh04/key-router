@@ -20,7 +20,7 @@ class AnthropicRequest(BaseModel):
     model: str
     messages: List[Message]
     system: Optional[Union[str, List[Dict[str, Any]]]] = None
-    max_tokens: Optional[int] = 4096
+    max_tokens: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
     stop_sequences: Optional[List[str]] = None
     stream: Optional[bool] = False

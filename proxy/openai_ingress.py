@@ -119,7 +119,7 @@ def openai_chat_to_anthropic(req: OpenAIRequest) -> AnthropicRequest:
         else:  # user
             messages.append(Message(role="user", content=text))
 
-    max_tokens = req.max_tokens or getattr(req, "max_completion_tokens", None) or 4096
+    max_tokens = req.max_tokens or getattr(req, "max_completion_tokens", None)
 
     stop = req.stop
     if isinstance(stop, str):

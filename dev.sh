@@ -8,7 +8,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 echo "========================================="
-echo "   freeClaude - Development Mode"
+echo "   key-router - Development Mode"
 echo "========================================="
 echo ""
 

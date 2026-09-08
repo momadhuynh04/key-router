@@ -7,7 +7,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo "========================================="
-echo "  freeClaude - IDE Detection Refresh"
+echo "  key-router - IDE Detection Refresh"
 echo "========================================="
 echo ""
 

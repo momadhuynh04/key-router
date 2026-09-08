@@ -243,7 +243,7 @@ def test_api_hello():
     assert response.status_code == 200
     data = response.json()
     assert "message" in data
-    assert "freeclaude" in data["message"].lower()
+    assert "key-router" in data["message"].lower()
 
 
 # ----------------------------------------

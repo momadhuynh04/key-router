@@ -1,11 +1,12 @@
 import json
 import os
 import re
+from functools import lru_cache
 from typing import Dict, Any
 
 ID_RE = re.compile(r"^[a-z0-9_-]{2,32}$")
 ENV_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
-BUILTIN_IDS = {"openrouter", "deepseekplatform"}
+BUILTIN_IDS = {"openrouter", "deepseekplatform", "googleaistudio"}
 
 def _get_config_path() -> str:
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -102,25 +103,33 @@ def validate_spec(spec: Dict[str, Any]) -> None:
                 raise ValueError(f"Header '{k}' value must be string")
 
 def load_custom_providers() -> Dict[str, Dict[str, Any]]:
+    return _load_custom_providers_cached()
+
+@lru_cache(maxsize=1)
+def _load_custom_providers_cached() -> Dict[str, Dict[str, Any]]:
     data = _read_config()
     raw = data.get("custom_providers", {})
     if not isinstance(raw, dict):
         return {}
-    return raw
+    return dict(raw)
+
+def invalidate_custom_providers_cache() -> None:
+    _load_custom_providers_cached.cache_clear()
 
 def save_custom_providers(providers: Dict[str, Dict[str, Any]]) -> None:
     data = _read_config()
     data["custom_providers"] = providers
     _write_config(data)
+    invalidate_custom_providers_cache()
 
 def save_provider(spec: Dict[str, Any]) -> None:
-    providers = load_custom_providers()
+    providers = dict(load_custom_providers())
     pid = spec["id"]
     providers[pid] = spec
     save_custom_providers(providers)
 
 def delete_provider(pid: str) -> bool:
-    providers = load_custom_providers()
+    providers = dict(load_custom_providers())
     if pid not in providers:
         return False
     del providers[pid]

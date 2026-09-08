@@ -4,6 +4,9 @@ from models.anthropic import AnthropicRequest, AnthropicResponse
 from models.events import SSEEvent
 
 class BaseProvider(ABC):
+    supports_anthropic: bool = False
+    supports_openai: bool = False
+
     def __init__(self, target_model: str):
         self.target_model = target_model
 

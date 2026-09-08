@@ -1,7 +1,41 @@
 {
   "model_mappings": {
-    "opus": "openrouter/qwen/qwen3.7-plus",
-    "sonnet": "deepseekplatform/deepseek-v4-flash",
-    "haiku": "deepseekplatform/deepseek-v4-pro"
-  }
+    "opus": "googleaistudio/gemini-3.1-flash-lite",
+    "sonnet": "googleaistudio/gemini-3.1-flash-lite",
+    "haiku": "googleaistudio/gemini-3.1-flash-lite",
+    "codex": "googleaistudio/gemini-3.1-flash-lite"
+  },
+  "ide_detected": {
+    "vscode": {
+      "binary": "/usr/bin/code",
+      "version": "1.129.1",
+      "name": "VS Code",
+      "config_dir": "Code",
+      "supports_claude_extension": true,
+      "last_detected": "2026-09-08T20:17:08.062260"
+    },
+    "vscodium": {
+      "binary": "/usr/bin/codium",
+      "version": "1.126.04524",
+      "name": "VSCodium",
+      "config_dir": "VSCodium",
+      "supports_claude_extension": true,
+      "last_detected": "2026-09-08T20:17:08.239526"
+    },
+    "cursor": {
+      "binary": "/usr/bin/cursor",
+      "version": "3.13.10",
+      "name": "Cursor",
+      "config_dir": "Cursor",
+      "supports_claude_extension": true,
+      "last_detected": "2026-09-08T20:17:08.451533"
+    }
+  },
+  "codex_cli_detected": {
+    "binary": "/usr/bin/codex",
+    "version": "codex-cli 0.149.0",
+    "name": "Codex CLI",
+    "last_detected": "2026-09-08T19:58:43.996587"
+  },
+  "custom_providers": {}
 }

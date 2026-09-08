@@ -1,6 +1,6 @@
 # How to Build a Custom Provider Adapter
 
-To add support for a custom LLM provider in `freeClaude`, you need to write a provider adapter that extends `BaseProvider` or `OpenAIBaseProvider` and register it in the router.
+To add support for a custom LLM provider in `key-router`, you need to write a provider adapter that extends `BaseProvider` or `OpenAIBaseProvider` and register it in the router.
 
 ## 1. Create your Provider Adapter
 Create a new directory in `provider/` (e.g., `provider/my_provider/`) and add an `adapter.py` file.

@@ -148,7 +148,7 @@ async def test_generate_happy_path(mock_post):
     
     assert resp.type == "message"
     assert resp.role == "assistant"
-    assert resp.stop_reason == "stop"
+    assert resp.stop_reason == "end_turn"
     assert len(resp.content) == 1
     assert resp.content[0]["type"] == "text"
     assert resp.content[0]["text"] == "I am here"

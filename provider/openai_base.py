@@ -1,5 +1,6 @@
 import json
 import httpx
+from config.logging import log_warn
 from typing import AsyncIterator, Dict, Any, List
 from provider.base import BaseProvider
 from models.anthropic import AnthropicRequest, AnthropicResponse, AnthropicUsage
@@ -10,14 +11,15 @@ import uuid
 def _anthropic_content_to_openai(role: str, content: Any) -> List[Dict[str, Any]]:
     """
     Convert an Anthropic message (role + content) to a list of OpenAI-format messages.
-    Handles text, tool_use (assistant calling tools), and tool_result (user returning results).
+    Handles text, thinking, tool_use (assistant calling tools), and tool_result (user returning results).
+    Preserves reasoning_content for thinking-mode models (DeepSeek R1 etc.).
     """
     if isinstance(content, str):
         return [{"role": role, "content": content}]
 
-    # Content is a list of blocks
     messages = []
     text_parts: List[str] = []
+    thinking_parts: List[str] = []
     tool_calls: List[Dict[str, Any]] = []
 
     for block in content:
@@ -25,9 +27,10 @@ def _anthropic_content_to_openai(role: str, content: Any) -> List[Dict[str, Any]
 
         if block_type == "text":
             text_parts.append(block.get("text", ""))
+        elif block_type == "thinking":
+            thinking_parts.append(block.get("thinking", block.get("text", "")))
 
         elif block_type == "tool_use":
-            # Anthropic tool_use → OpenAI tool_call
             raw_id = block.get("id", f"call_{uuid.uuid4().hex}")
             tc_id = raw_id[6:] if raw_id.startswith("toolu_") else raw_id
             tool_calls.append({
@@ -40,7 +43,6 @@ def _anthropic_content_to_openai(role: str, content: Any) -> List[Dict[str, Any]
             })
 
         elif block_type == "tool_result":
-            # Anthropic tool_result → OpenAI tool role message
             result_content = block.get("content", "")
             if isinstance(result_content, list):
                 result_content = "\n".join(
@@ -54,15 +56,18 @@ def _anthropic_content_to_openai(role: str, content: Any) -> List[Dict[str, Any]
                 "content": result_content
             })
 
-    # Combine text + tool_calls into a single assistant message
-    if role == "assistant" and (text_parts or tool_calls):
+    if role == "assistant" and (text_parts or thinking_parts or tool_calls):
         msg: Dict[str, Any] = {"role": "assistant"}
-        msg["content"] = "\n".join(text_parts) if text_parts else None
+        # THINKING OFF: không gửi reasoning_content nữa — DeepSeek V4 lỗi khi echo
+        msg["content"] = "\n".join(text_parts) if text_parts else ""
+        if msg["content"] is None:
+            msg["content"] = ""
         if tool_calls:
             msg["tool_calls"] = tool_calls
         messages.insert(0, msg)
-    elif role == "user" and text_parts:
-        messages.insert(0, {"role": "user", "content": "\n".join(text_parts)})
+    elif role == "user" and (text_parts or thinking_parts):
+        content = "\n".join(text_parts or thinking_parts)
+        messages.insert(0, {"role": "user", "content": content})
 
     return messages
 
@@ -105,6 +110,7 @@ def _openai_tool_calls_to_anthropic(tool_calls: List[Dict[str, Any]]) -> List[Di
 
 
 class OpenAIBaseProvider(BaseProvider):
+    supports_openai: bool = True
     """
     Shared base provider for any OpenAI Chat Completions compatible API.
     Handles full Anthropic ↔ OpenAI translation including tool use.
@@ -124,7 +130,6 @@ class OpenAIBaseProvider(BaseProvider):
         """Convert Anthropic Messages request to OpenAI Chat Completions request."""
         messages = []
 
-        # System prompt
         if anthropic_request.system:
             system_content = anthropic_request.system
             if isinstance(system_content, list):
@@ -133,7 +138,6 @@ class OpenAIBaseProvider(BaseProvider):
                 )
             messages.append({"role": "system", "content": system_content})
 
-        # Conversation messages — handles text, tool_use, tool_result
         for msg in anthropic_request.messages:
             converted = _anthropic_content_to_openai(msg.role, msg.content)
             messages.extend(converted)
@@ -144,56 +148,92 @@ class OpenAIBaseProvider(BaseProvider):
             "stream": anthropic_request.stream,
         }
 
-        if anthropic_request.max_tokens:
-            body["max_tokens"] = anthropic_request.max_tokens
+        # Respect explicit max_tokens; on agentic retry we bump it if truncated (see server.py)
+        if anthropic_request.model_fields_set and "max_tokens" in anthropic_request.model_fields_set:
+            if anthropic_request.max_tokens is not None:
+                body["max_tokens"] = anthropic_request.max_tokens
+        # Allow server retry to inject _retry_max_tokens when previous turn was truncated
+        if hasattr(anthropic_request, "_retry_max_tokens") and getattr(anthropic_request, "_retry_max_tokens"):
+            body["max_tokens"] = getattr(anthropic_request, "_retry_max_tokens")
         if anthropic_request.temperature is not None:
             body["temperature"] = anthropic_request.temperature
+        if anthropic_request.top_p is not None:
+            body["top_p"] = anthropic_request.top_p
+        if anthropic_request.stop_sequences:
+            body["stop"] = anthropic_request.stop_sequences
 
-        # Map Anthropic thinking → OpenAI reasoning_effort
-        if anthropic_request.thinking and anthropic_request.thinking.type == "enabled":
-            budget = anthropic_request.thinking.budget_tokens or 4000
-            if budget > 16000:
-                body["reasoning_effort"] = "xhigh"
-            elif budget > 8000:
-                body["reasoning_effort"] = "high"
-            elif budget > 2000:
-                body["reasoning_effort"] = "medium"
-            else:
-                body["reasoning_effort"] = "low"
+        if "deepseek" in self.target_model.lower():
+            body["extra_body"] = {"thinking": {"type": "disabled"}}
+            body["thinking"] = {"type": "disabled"}
+            body.pop("reasoning_effort", None)
+        else:
+            if anthropic_request.thinking and anthropic_request.thinking.type == "enabled":
+                budget = anthropic_request.thinking.budget_tokens or 4000
+                if budget > 16000:
+                    body["reasoning_effort"] = "xhigh"
+                elif budget > 8000:
+                    body["reasoning_effort"] = "high"
+                elif budget > 2000:
+                    body["reasoning_effort"] = "medium"
+                else:
+                    body["reasoning_effort"] = "low"
 
-        # Direct passthrough for OpenAI-ingress clients (e.g. Codex via
-        # /v1/chat/completions) that send an explicit reasoning_effort.
-        effort = getattr(anthropic_request, "reasoning_effort", None)
-        if effort:
-            body["reasoning_effort"] = effort
-
-        # Tool definitions
         if anthropic_request.tools:
             body["tools"] = _anthropic_tools_to_openai(anthropic_request.tools)
+            tc = anthropic_request.tool_choice
+            if isinstance(tc, dict):
+                t = tc.get("type")
+                if t == "any":
+                    body["tool_choice"] = "required"
+                elif t == "auto":
+                    body["tool_choice"] = "auto"
+                elif t == "tool" and tc.get("name"):
+                    body["tool_choice"] = {"type": "function", "function": {"name": tc["name"]}}
+            body["parallel_tool_calls"] = True
+
+        # thinking mode OFF — không inject reasoning_content nữa
 
         return body
 
+    @staticmethod
+    def _map_finish_reason(openai_reason: str | None, has_tool_calls: bool) -> str | None:
+        # Always surface truncation — even when tool_calls present (truncated mid-JSON).
+        if openai_reason == "length":
+            return "max_tokens"
+        if has_tool_calls:
+            return "tool_use"
+        m = {"tool_calls": "tool_use", "content_filter": "stop_sequence", "stop": "end_turn", "end_turn": "end_turn"}
+        return m.get(openai_reason, openai_reason) if openai_reason else None
+
     async def translate_response(self, provider_response: Dict[str, Any]) -> AnthropicResponse:
-        """Convert OpenAI Chat Completions response to Anthropic Messages response."""
         choice = provider_response.get("choices", [{}])[0]
         message = choice.get("message", {})
-        finish_reason = choice.get("finish_reason")
+        raw_finish = choice.get("finish_reason")
 
         content_blocks: List[Dict[str, Any]] = []
 
-        # Text content
+        if "reasoning_content" in message or "reasoning" in message:
+            reasoning = message.get("reasoning_content") if "reasoning_content" in message else message.get("reasoning")
+            if reasoning is None:
+                reasoning = ""
+            content_blocks.append({"type": "thinking", "thinking": reasoning})
+
         text = message.get("content")
         if text:
             content_blocks.append({"type": "text", "text": text})
 
-        # Tool calls
         tool_calls = message.get("tool_calls")
         if tool_calls:
             content_blocks.extend(_openai_tool_calls_to_anthropic(tool_calls))
-            finish_reason = "tool_use"
 
         if not content_blocks:
             content_blocks.append({"type": "text", "text": ""})
+
+        finish_reason = self._map_finish_reason(raw_finish, bool(tool_calls))
+        if not finish_reason:
+            finish_reason = "end_turn" if not tool_calls else "tool_use"
+        if finish_reason == "max_tokens":
+            log_warn(f"[⚠️] Upstream truncated (finish_reason=length → max_tokens) model={self.target_model}")
 
         provider_usage = provider_response.get("usage", {})
         usage = AnthropicUsage(
@@ -210,13 +250,24 @@ class OpenAIBaseProvider(BaseProvider):
         )
 
     async def generate(self, request_body: Dict[str, Any]) -> AnthropicResponse:
-        async with httpx.AsyncClient() as client:
+        if "deepseek" in self.target_model.lower() and "v4" in self.target_model.lower():
+            import pathlib
+            try:
+                pathlib.Path("/tmp/key-router-deepseek-last-request.json").write_text(json.dumps(request_body, ensure_ascii=False, indent=2))
+            except Exception:
+                pass
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
             resp = await client.post(
                 f"{self.base_url}/chat/completions",
                 headers=self._get_headers(),
                 json=request_body,
-                timeout=120.0
             )
+            if resp.status_code != 200 and "deepseek" in self.target_model.lower():
+                import pathlib
+                try:
+                    pathlib.Path("/tmp/key-router-deepseek-last-error.txt").write_text(resp.text[:5000])
+                except Exception:
+                    pass
             resp.raise_for_status()
             return await self.translate_response(resp.json())
 
@@ -234,21 +285,38 @@ class OpenAIBaseProvider(BaseProvider):
             }
         })
 
-        # Streaming state
         text_block_open = False
-        tool_blocks: Dict[int, Dict[str, Any]] = {}  # index → partial tool call
+        thinking_block_open = False
+        thinking_index: int | None = None
+        tool_blocks: dict[int, dict[str, Any]] = {}
         block_index = 0
+        reasoning_buffer = ""
+        upstream_finish: str | None = None
+        upstream_usage: dict[str, Any] = {}
+        seen_data = False
 
-        async with httpx.AsyncClient() as client:
+        if "deepseek" in self.target_model.lower() and "v4" in self.target_model.lower():
+            import pathlib
+            try:
+                pathlib.Path("/tmp/key-router-deepseek-last-stream-request.json").write_text(json.dumps(request_body, ensure_ascii=False, indent=2))
+            except Exception:
+                pass
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
             async with client.stream(
                 "POST",
                 f"{self.base_url}/chat/completions",
                 headers=self._get_headers(),
                 json=request_body,
-                timeout=120.0
             ) as response:
                 if response.status_code != 200:
-                    await response.aread()
+                    err = (await response.aread()).decode()[:5000] if hasattr(response, 'aread') else ""
+                    if "deepseek" in self.target_model.lower():
+                        import pathlib
+                        try:
+                            pathlib.Path("/tmp/key-router-deepseek-last-stream-error.txt").write_text(err)
+                            pathlib.Path("/tmp/key-router-deepseek-last-stream-request.json").write_text(json.dumps(request_body, ensure_ascii=False, indent=2))
+                        except Exception:
+                            pass
                     response.raise_for_status()
                 async for line in response.aiter_lines():
                     if not line or not line.startswith("data: "):
@@ -262,11 +330,39 @@ class OpenAIBaseProvider(BaseProvider):
                         continue
 
                     choices = chunk.get("choices", [])
-                    if not choices:
+                    if choices:
+                        seen_data = True
+                        fr = choices[0].get("finish_reason")
+                        if fr:
+                            upstream_finish = fr
+                    else:
+                        # usage-only chunk is still progress
+                        if chunk.get("usage"):
+                            seen_data = True
+                            upstream_usage = chunk.get("usage", {})
                         continue
                     delta = choices[0].get("delta", {})
+                    if not delta:
+                        if chunk.get("usage"):
+                            upstream_usage = chunk.get("usage", {})
+                        continue
 
-                    # --- Text delta ---
+                    reasoning_delta = delta.get("reasoning_content") or delta.get("reasoning")
+                    if reasoning_delta:
+                        if not thinking_block_open:
+                            yield SSEEvent(event="content_block_start", data={
+                                "type": "content_block_start", "index": block_index,
+                                "content_block": {"type": "thinking", "thinking": ""}
+                            })
+                            thinking_block_open = True
+                            thinking_index = block_index
+                            block_index += 1
+                        yield SSEEvent(event="content_block_delta", data={
+                            "type": "content_block_delta", "index": thinking_index,
+                            "delta": {"type": "thinking_delta", "thinking": reasoning_delta}
+                        })
+                        reasoning_buffer += reasoning_delta
+
                     text_delta = delta.get("content")
                     if text_delta:
                         if not text_block_open:
@@ -280,12 +376,10 @@ class OpenAIBaseProvider(BaseProvider):
                             "delta": {"type": "text_delta", "text": text_delta}
                         })
 
-                    # --- Tool call delta ---
                     for tc_chunk in delta.get("tool_calls", []):
                         tc_index = tc_chunk.get("index", 0)
 
                         if tc_index not in tool_blocks:
-                            # Close text block if open
                             if text_block_open:
                                 yield SSEEvent(event="content_block_stop", data={
                                     "type": "content_block_stop", "index": block_index
@@ -318,20 +412,37 @@ class OpenAIBaseProvider(BaseProvider):
                                 "delta": {"type": "input_json_delta", "partial_json": args_delta}
                             })
 
-        # Close any open blocks
+                    if chunk.get("usage"):
+                        upstream_usage = chunk.get("usage", {})
+
+        if not seen_data or upstream_finish is None:
+            log_warn(f"[⚠️] Upstream stream ended without finish_reason (seen_data={seen_data}) model={self.target_model} — will surface as incomplete")
+
         if text_block_open:
             yield SSEEvent(event="content_block_stop", data={
                 "type": "content_block_stop", "index": block_index
+            })
+        if thinking_block_open:
+            yield SSEEvent(event="content_block_stop", data={
+                "type": "content_block_stop", "index": thinking_index
             })
         for tc_index in tool_blocks:
             yield SSEEvent(event="content_block_stop", data={
                 "type": "content_block_stop", "index": block_index + tc_index
             })
 
-        stop_reason = "tool_use" if tool_blocks else "end_turn"
+        if not seen_data or upstream_finish is None:
+            upstream_finish = "length"
+            log_warn(f"[⚠️] No finish_reason from upstream — treating as truncated (incomplete) for retry")
+        mapped = self._map_finish_reason(upstream_finish, bool(tool_blocks))
+        if not mapped:
+            mapped = "tool_use" if tool_blocks else "end_turn"
+        if mapped == "max_tokens":
+            log_warn(f"[⚠️] Upstream truncated mid-stream (finish_reason={upstream_finish} → max_tokens) model={self.target_model}")
+        out_tokens = upstream_usage.get("completion_tokens", 0) if upstream_usage else 0
         yield SSEEvent(event="message_delta", data={
             "type": "message_delta",
-            "delta": {"stop_reason": stop_reason, "stop_sequence": None},
-            "usage": {"output_tokens": 0}
+            "delta": {"stop_reason": mapped, "stop_sequence": None},
+            "usage": {"output_tokens": out_tokens}
         })
         yield SSEEvent(event="message_stop", data={"type": "message_stop"})

@@ -11,7 +11,7 @@ except ImportError:
 
 
 def _serve():
-    print(f"Starting freeClaude proxy on {settings.host}:{settings.port}")
+    print(f"Starting key-router proxy on {settings.host}:{settings.port}")
     uvicorn.run("proxy.server:app", host=settings.host, port=settings.port, reload=True)
 
 
@@ -24,7 +24,7 @@ def main():
 
 
 def _build_typer_app():
-    app = typer.Typer(add_completion=False, no_args_is_help=False, help="freeClaude — custom provider CLI")
+    app = typer.Typer(add_completion=False, no_args_is_help=False, help="key-router — custom provider CLI")
 
     @app.command("serve")
     def serve():

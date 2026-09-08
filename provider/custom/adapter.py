@@ -9,6 +9,8 @@ from config.settings import settings
 
 
 class GenericOpenAIProvider(OpenAIBaseProvider):
+    supports_openai: bool = True
+
     def __init__(self, target_model: str, base_url: str, api_key: str, extra_headers: Dict[str, str] = None):
         super().__init__(target_model=target_model, base_url=base_url.rstrip("/"), api_key=api_key)
         self.extra_headers = extra_headers or {}
@@ -20,6 +22,7 @@ class GenericOpenAIProvider(OpenAIBaseProvider):
 
 
 class GenericAnthropicProvider(BaseProvider):
+    supports_anthropic: bool = True
     def __init__(self, target_model: str, base_url: str, api_key: str, extra_headers: Dict[str, str] = None):
         super().__init__(target_model)
         self.base_url = base_url.rstrip("/")

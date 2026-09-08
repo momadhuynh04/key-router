@@ -7,7 +7,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 echo "========================================="
-echo "   freeClaude - Universal Proxy Server"
+echo "   key-router - Universal Proxy Server"
 echo "========================================="
 echo ""
 
@@ -22,7 +22,7 @@ source venv/bin/activate
 
 cleanup() {
     echo ""
-    echo -e "${CYAN}[*] Shutting down freeClaude...${NC}"
+    echo -e "${CYAN}[*] Shutting down key-router...${NC}"
     kill $BACKEND_PID 2>/dev/null
     exit 0
 }
@@ -45,7 +45,7 @@ fi
 
 echo ""
 echo "========================================="
-echo -e "${GREEN}[OK] freeClaude is running successfully!${NC}"
+echo -e "${GREEN}[OK] key-router is running successfully!${NC}"
 echo "========================================="
 echo "- Press Ctrl+C to stop the server."
 echo ""
