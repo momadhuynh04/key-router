@@ -1,7 +1,7 @@
 <div align="center">
 
   <h1>key-router</h1>
-  <h3><strong>Claude Code + Codex — your models, your keys</strong></h3>
+  <h3><strong>Claude Code + Codex — 1 key, universal proxy</strong></h3>
 
   <p>
     <img src="https://img.shields.io/badge/Python-3.11+-blue.svg" alt="Python 3.11+">
@@ -34,7 +34,7 @@
   <br/><br/>
   ![Claude Code via proxy](previewuse.png)
   <br/>
-  <i>Claude Code routed through key-router to a DeepSeek backend</i>
+  <i>Claude Code routed through key-router to Google backend</i>
 </div>
 
 ---
