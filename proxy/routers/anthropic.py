@@ -7,7 +7,7 @@ from models.anthropic import AnthropicRequest
 from proxy.router import provider_router
 from proxy.errors import anthropic_error
 from proxy.retry import AGENTIC_RETRY_ATTEMPTS
-from proxy.responses_ingress import has_native_tool_call, stream_text, looks_like_action_narration, AGENTIC_NUDGE
+from proxy.responses_ingress import has_native_tool_call, stream_text, looks_like_action_narration, AGENTIC_NUDGE, _is_garbled
 
 router = APIRouter()
 
@@ -61,9 +61,11 @@ async def handle_messages(request: AnthropicRequest):
                     premature = not buf or not saw_stop
                     has_tool = has_native_tool_call(buf)
                     text = stream_text(buf)
+                    garbled = not has_tool and _is_garbled(text)
                     should_retry = is_agentic and (
-                        (not has_tool and (premature or truncated or _is_empty_or_narration(text, has_tool)))
+                        (not has_tool and (premature or truncated or _is_empty_or_narration(text, has_tool) or garbled))
                         or truncated
+                        or garbled
                     )
                     if not should_retry or attempt == AGENTIC_RETRY_ATTEMPTS - 1:
                         if premature:
@@ -75,7 +77,10 @@ async def handle_messages(request: AnthropicRequest):
                         for ev in buf:
                             yield ev.format()
                         return
-                    reason = "premature cut" if premature else ("truncated" if truncated else "empty/narration without tool call")
+                    if garbled:
+                        reason = "garbled without tool call"
+                    else:
+                        reason = "premature cut" if premature else ("truncated" if truncated else "empty/narration without tool call")
                     if truncated:
                         cur = getattr(anthropic_req, "_retry_max_tokens", None) or base_max or 4096
                         nxt = cur * 2
@@ -102,8 +107,9 @@ async def handle_messages(request: AnthropicRequest):
                 has_tool = any(b.get("type") == "tool_use" for b in response.content)
                 text = response_text(response)
                 truncated = response.stop_reason == "max_tokens"
+                garbled_ns = not has_tool and _is_garbled(text)
                 should_retry = is_agentic and (
-                    (not has_tool and (truncated or _is_empty_or_narration(text, has_tool))) or truncated
+                    (not has_tool and (truncated or _is_empty_or_narration(text, has_tool) or garbled_ns)) or truncated or garbled_ns
                 )
                 if not should_retry or attempt == AGENTIC_RETRY_ATTEMPTS - 1:
                     if truncated:
@@ -116,7 +122,10 @@ async def handle_messages(request: AnthropicRequest):
                     nxt = min(nxt, 16384)
                     anthropic_req._retry_max_tokens = nxt  # type: ignore
                     logger.info(f"[🔁] Claude Code truncated non-stream → bumping max_tokens to {nxt}")
-                reason = "truncated" if truncated else "empty/narration"
+                if garbled_ns:
+                    reason = "garbled without tool call"
+                else:
+                    reason = "truncated" if truncated else "empty/narration"
                 logger.info(f"[🔁] Claude Code {reason} without tool call, retrying {attempt+1}/{AGENTIC_RETRY_ATTEMPTS} text_preview={_short_preview(text)!r}")
                 if isinstance(anthropic_req.system, list):
                     anthropic_req.system.append({"type": "text", "text": AGENTIC_NUDGE})

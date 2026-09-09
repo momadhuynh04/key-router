@@ -17,6 +17,7 @@ from proxy.responses_ingress import (
     looks_like_action_narration,
     AGENTIC_NUDGE,
     _unwrap_additional_tools,
+    _is_garbled,
 )
 from proxy.retry import AGENTIC_RETRY_ATTEMPTS
 
@@ -83,7 +84,8 @@ async def handle_responses(request: ResponsesRequest):
                         and not has_native_tool_call(events_buffer)
                         and looks_like_action_narration(text)
                     )
-                    should_retry = (narrated or premature_cut or truncated or empty_with_tools)
+                    garbled = bool(tool_schemas and not has_native_tool_call(events_buffer) and _is_garbled(text))
+                    should_retry = (narrated or premature_cut or truncated or empty_with_tools or garbled)
                     if not should_retry or attempt == AGENTIC_RETRY_ATTEMPTS - 1:
                         if premature_cut:
                             log_warn(f"[⚠️] Upstream stream ended prematurely (no message_stop) after {attempt + 1} attempt(s)")
@@ -95,7 +97,9 @@ async def handle_responses(request: ResponsesRequest):
                         ):
                             yield line
                         return
-                    if truncated:
+                    if garbled:
+                        reason = "garbled output without tool call"
+                    elif truncated:
                         reason = "truncated (max_tokens)"
                     elif premature_cut:
                         reason = "premature stream cut"
@@ -111,18 +115,20 @@ async def handle_responses(request: ResponsesRequest):
         else:
             for attempt in range(AGENTIC_RETRY_ATTEMPTS):
                 response = await provider.generate(provider_request_body)
-                narrated = (
-                    tool_schemas
-                    and not any(b.get("type") == "tool_use" for b in response.content)
-                    and looks_like_action_narration(response_text(response))
-                )
+                _rt = response_text(response)
+                _has_tool = any(b.get("type") == "tool_use" for b in response.content)
+                narrated = tool_schemas and not _has_tool and looks_like_action_narration(_rt)
+                garbled_ns = bool(tool_schemas and not _has_tool and _is_garbled(_rt))
                 truncated = response.stop_reason == "max_tokens"
-                should_retry = narrated or truncated
+                should_retry = narrated or truncated or garbled_ns
                 if not should_retry or attempt == AGENTIC_RETRY_ATTEMPTS - 1:
                     if truncated:
                         log_warn(f"[⚠️] Codex non-stream truncated (max_tokens)")
                     return anthropic_response_to_responses_object(response, request.model, tool_schemas)
-                reason = "truncated (max_tokens)" if truncated else "narrated without tool call"
+                if garbled_ns:
+                    reason = "garbled output without tool call"
+                else:
+                    reason = "truncated (max_tokens)" if truncated else "narrated without tool call"
                 logger.info(f"[🔁] Codex {reason}, retrying ({attempt + 1}/{AGENTIC_RETRY_ATTEMPTS})")
                 anthropic_request.system = (
                     (anthropic_request.system or "") + "\n\n" + AGENTIC_NUDGE

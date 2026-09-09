@@ -44,9 +44,55 @@ class OpenRouterAnthropicProvider(BaseProvider):
             "anthropic-version": "2023-06-01",
         }
 
+    def _sanitize_tools(self, body: Dict[str, Any]):
+        tools = body.get("tools")
+        if not isinstance(tools, list):
+            return
+        import re as _re
+        def clean_schema(node):
+            if isinstance(node, dict):
+                if "pattern" in node:
+                    pat = node.get("pattern")
+                    if not isinstance(pat, str):
+                        node.pop("pattern", None)
+                    else:
+                        try:
+                            _re.compile(pat)
+                        except re.error:
+                            node.pop("pattern", None)
+                    # Cohere strict validator rejects many valid ECMA patterns; drop pattern for cohere targets
+                    if "cohere" in self.target_model.lower() or "north" in self.target_model.lower():
+                        node.pop("pattern", None)
+                for v in list(node.values()):
+                    clean_schema(v)
+            elif isinstance(node, list):
+                for item in node:
+                    clean_schema(item)
+        for t in tools:
+            if isinstance(t, dict):
+                schema = t.get("input_schema")
+                if isinstance(schema, dict):
+                    clean_schema(schema)
+                else:
+                    clean_schema(t)
+        body["tools"] = tools
+
     async def translate_request(self, anthropic_request: AnthropicRequest) -> Dict[str, Any]:
         body = anthropic_request.model_dump(exclude_none=True)
         body["model"] = self.target_model
+        self._sanitize_tools(body)
+        if "dots" in self.target_model.lower():
+            body["extra_body"] = body.get("extra_body", {})
+            body.setdefault("chat_template_kwargs", {})["enable_thinking"] = body.get("thinking", {}).get("type") == "enabled" if isinstance(body.get("thinking"), dict) else False
+            if anthropic_request.max_tokens and anthropic_request.max_tokens < 8192:
+                body["max_tokens"] = 16384
+            elif not anthropic_request.max_tokens:
+                body["max_tokens"] = 16384
+            if anthropic_request.tools and not anthropic_request.tool_choice:
+                body["tool_choice"] = {"type": "auto"}
+        if "cohere" in self.target_model.lower() or "north" in self.target_model.lower():
+            body.pop("extra_body", None)
+            body.pop("chat_template_kwargs", None)
         return body
 
     async def translate_response(self, provider_response: Dict[str, Any]) -> AnthropicResponse:

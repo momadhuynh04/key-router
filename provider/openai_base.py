@@ -72,16 +72,42 @@ def _anthropic_content_to_openai(role: str, content: Any) -> List[Dict[str, Any]
     return messages
 
 
-def _anthropic_tools_to_openai(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _sanitize_json_schema(node, is_cohere: bool = False):
+    if isinstance(node, dict):
+        if "pattern" in node:
+            pat = node.get("pattern")
+            if not isinstance(pat, str):
+                node.pop("pattern", None)
+            else:
+                import re as _re2
+                try:
+                    _re2.compile(pat)
+                except re.error:
+                    node.pop("pattern", None)
+                if is_cohere:
+                    node.pop("pattern", None)
+        for v in list(node.values()):
+            _sanitize_json_schema(v, is_cohere)
+    elif isinstance(node, list):
+        for item in node:
+            _sanitize_json_schema(item, is_cohere)
+
+
+def _anthropic_tools_to_openai(tools: List[Dict[str, Any]], is_cohere: bool = False) -> List[Dict[str, Any]]:
     """Convert Anthropic tool definitions to OpenAI function-calling format."""
     result = []
     for tool in tools:
+        schema = tool.get("input_schema", {}) or {}
+        if isinstance(schema, dict):
+            import copy as _cp
+            schema = _cp.deepcopy(schema)
+            _sanitize_json_schema(schema, is_cohere=is_cohere)
         result.append({
             "type": "function",
             "function": {
                 "name": tool.get("name", ""),
                 "description": tool.get("description", ""),
-                "parameters": tool.get("input_schema", {})
+                "parameters": schema
             }
         })
     return result
@@ -148,6 +174,16 @@ class OpenAIBaseProvider(BaseProvider):
             "stream": anthropic_request.stream,
         }
 
+        is_nemotron = "nemotron" in self.target_model.lower()
+        if is_nemotron:
+            eb = body.get("extra_body") or {}
+            eb.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
+            eb["enable_thinking"] = False
+            eb["force_nonempty_content"] = True
+            body["extra_body"] = eb
+            if "max_tokens" not in body and not getattr(anthropic_request, "_retry_max_tokens", None):
+                body["max_tokens"] = 8192
+            anthropic_request.thinking = None  # type: ignore
         # Respect explicit max_tokens; on agentic retry we bump it if truncated (see server.py)
         if anthropic_request.model_fields_set and "max_tokens" in anthropic_request.model_fields_set:
             if anthropic_request.max_tokens is not None:
@@ -162,11 +198,11 @@ class OpenAIBaseProvider(BaseProvider):
         if anthropic_request.stop_sequences:
             body["stop"] = anthropic_request.stop_sequences
 
-        if "deepseek" in self.target_model.lower():
+        if not is_nemotron and "deepseek" in self.target_model.lower():
             body["extra_body"] = {"thinking": {"type": "disabled"}}
             body["thinking"] = {"type": "disabled"}
             body.pop("reasoning_effort", None)
-        else:
+        elif not is_nemotron:
             if anthropic_request.thinking and anthropic_request.thinking.type == "enabled":
                 budget = anthropic_request.thinking.budget_tokens or 4000
                 if budget > 16000:
@@ -179,7 +215,8 @@ class OpenAIBaseProvider(BaseProvider):
                     body["reasoning_effort"] = "low"
 
         if anthropic_request.tools:
-            body["tools"] = _anthropic_tools_to_openai(anthropic_request.tools)
+            _is_cohere = "cohere" in self.target_model.lower() or "north" in self.target_model.lower()
+            body["tools"] = _anthropic_tools_to_openai(anthropic_request.tools, is_cohere=_is_cohere)
             tc = anthropic_request.tool_choice
             if isinstance(tc, dict):
                 t = tc.get("type")
@@ -212,14 +249,44 @@ class OpenAIBaseProvider(BaseProvider):
 
         content_blocks: List[Dict[str, Any]] = []
 
-        if "reasoning_content" in message or "reasoning" in message:
-            reasoning = message.get("reasoning_content") if "reasoning_content" in message else message.get("reasoning")
-            if reasoning is None:
-                reasoning = ""
-            content_blocks.append({"type": "thinking", "thinking": reasoning})
+        reasoning_raw = message.get("reasoning_content")
+        if reasoning_raw is None:
+            reasoning_raw = message.get("reasoning")
+        reasoning_text = ""
+        if isinstance(reasoning_raw, str):
+            reasoning_text = reasoning_raw
+        elif isinstance(reasoning_raw, list):
+            reasoning_text = "\n".join(str(p.get("text", "") if isinstance(p, dict) else str(p)) for p in reasoning_raw if p)
+        elif isinstance(reasoning_raw, dict):
+            reasoning_text = reasoning_raw.get("text", "") or reasoning_raw.get("content", "") or ""
+        if reasoning_text and reasoning_text.strip():
+            content_blocks.append({"type": "thinking", "thinking": reasoning_text})
 
         text = message.get("content")
-        if text:
+        if isinstance(text, list):
+            text = "\n".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in text)
+        if isinstance(text, str):
+            import re as _re
+            m = _re.search(r"<think>(.*?)</think>", text, _re.DOTALL | _re.IGNORECASE)
+            if m and m.group(1).strip() and not text.replace(m.group(0), "").strip():
+                text = ""
+                if not reasoning_text.strip():
+                    reasoning_text = m.group(1).strip()
+                    if not any(b.get("type") == "thinking" for b in content_blocks):
+                        content_blocks.insert(0, {"type": "thinking", "thinking": reasoning_text})
+            elif m and m.group(1).strip():
+                inner = m.group(1).strip()
+                if not any(b.get("type") == "thinking" for b in content_blocks):
+                    content_blocks.insert(0, {"type": "thinking", "thinking": inner})
+                text = _re.sub(r"<think>.*?</think>", "", text, flags=_re.DOTALL | _re.IGNORECASE).strip()
+        reasoning_for_fallback = ""
+        for b in content_blocks:
+            if b.get("type") == "thinking" and b.get("thinking", "").strip():
+                reasoning_for_fallback = b["thinking"]
+                break
+        if (not text or not text.strip()) and reasoning_for_fallback and reasoning_for_fallback.strip():
+            text = reasoning_for_fallback
+        if text and text.strip():
             content_blocks.append({"type": "text", "text": text})
 
         tool_calls = message.get("tool_calls")
@@ -348,7 +415,18 @@ class OpenAIBaseProvider(BaseProvider):
                         continue
 
                     reasoning_delta = delta.get("reasoning_content") or delta.get("reasoning")
-                    if reasoning_delta:
+                    if isinstance(reasoning_delta, list):
+                        reasoning_delta = "".join(str(p.get("text","") if isinstance(p, dict) else str(p)) for p in reasoning_delta)
+                    elif isinstance(reasoning_delta, dict):
+                        reasoning_delta = reasoning_delta.get("text","") or reasoning_delta.get("content","") or ""
+                    if reasoning_delta and "</think>" in reasoning_delta:
+                        import re as _re_rd
+                        if reasoning_delta.strip().startswith("</think>"):
+                            reasoning_delta = reasoning_delta.split("</think>", 1)[-1]
+                        reasoning_delta = _re_rd.sub(r"<think>.*?</think>", "", reasoning_delta, flags=_re_rd.DOTALL | _re_rd.IGNORECASE)
+                        if not reasoning_delta.strip():
+                            reasoning_delta = ""
+                    if reasoning_delta and reasoning_delta.strip():
                         if not thinking_block_open:
                             yield SSEEvent(event="content_block_start", data={
                                 "type": "content_block_start", "index": block_index,
@@ -364,6 +442,14 @@ class OpenAIBaseProvider(BaseProvider):
                         reasoning_buffer += reasoning_delta
 
                     text_delta = delta.get("content")
+                    if isinstance(text_delta, list):
+                        text_delta = "".join(p.get("text","") if isinstance(p, dict) else str(p) for p in text_delta)
+                    if isinstance(text_delta, str) and "</think>" in text_delta:
+                        import re as _re2
+                        if text_delta.strip().startswith("</think>") or text_delta.lstrip().startswith("</think>"):
+                            _, _, tail = text_delta.partition("</think>")
+                            text_delta = tail
+                        text_delta = _re2.sub(r"<think>.*?</think>", "", text_delta, flags=_re2.DOTALL | _re2.IGNORECASE)
                     if text_delta:
                         if not text_block_open:
                             yield SSEEvent(event="content_block_start", data={

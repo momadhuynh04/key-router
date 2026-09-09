@@ -417,9 +417,24 @@ def _content_blocks_to_output_items(content: List[Dict[str, Any]]) -> List[Dict[
     for block in content:
         block_type = block.get("type")
         if block_type == "thinking":
+            thinking_text = block.get("thinking", "") or block.get("text", "")
+            if thinking_text and thinking_text.strip():
+                import re as _re_gc
+                cleaned = _re_gc.sub(r"<think>.*?</think>", "", thinking_text, flags=_re_gc.DOTALL | _re_gc.IGNORECASE).strip()
+                raw = cleaned if cleaned else thinking_text.strip()
+                if raw:
+                    text_buffer.append(raw)
             continue
         if block_type == "text" and block.get("text"):
-            text_buffer.append(block["text"])
+            raw_text = block.get("text", "")
+            import re as _re_gc2
+            if "</think>" in raw_text:
+                head, _, tail = raw_text.partition("</think>")
+                tail = tail.strip()
+                raw_text = tail if tail else head.strip()
+            raw_text = _re_gc2.sub(r"<think>.*?</think>", "", raw_text, flags=_re_gc2.DOTALL | _re_gc2.IGNORECASE).strip()
+            if raw_text:
+                text_buffer.append(raw_text)
         elif block_type == "tool_use":
             flush_text()
             items.append({
@@ -578,6 +593,38 @@ async def anthropic_events_to_responses_stream(
             block = data.get("content_block", {})
             block_type = block.get("type")
             if block_type == "thinking":
+                thinking_raw = block.get("thinking", "") or block.get("text", "")
+                if thinking_raw and thinking_raw.strip():
+                    import re as _re_th
+                    cleaned = _re_th.sub(r"<think>.*?</think>", "", thinking_raw, flags=_re_th.DOTALL | _re_th.IGNORECASE).strip()
+                    if "</think>" in thinking_raw:
+                        _, _, tail = thinking_raw.partition("</think>")
+                        cleaned = tail.strip() or cleaned
+                    if cleaned:
+                        index = state.next_output_index()
+                        state.item_type = "message"
+                        state.item_id = _new_item_id("msg")
+                        state.text_buffer = cleaned
+                        header = {
+                            "type": "message", "id": state.item_id,
+                            "role": "assistant", "status": "in_progress", "content": []
+                        }
+                        state.item_header = header
+                        yield _sse("response.output_item.added", {
+                            "type": "response.output_item.added",
+                            "sequence_number": seq, "output_index": index, "item": header,
+                        }); seq += 1
+                        yield _sse("response.content_part.added", {
+                            "type": "response.content_part.added",
+                            "sequence_number": seq, "item_id": state.item_id,
+                            "output_index": index, "content_index": 0,
+                            "part": {"type": "output_text", "text": "", "annotations": []},
+                        }); seq += 1
+                        yield _sse("response.output_text.delta", {
+                            "type": "response.output_text.delta",
+                            "sequence_number": seq, "item_id": state.item_id,
+                            "output_index": index, "content_index": 0, "delta": cleaned,
+                        }); seq += 1
                 continue
             index = state.next_output_index()
 
@@ -621,6 +668,26 @@ async def anthropic_events_to_responses_stream(
             delta = data.get("delta", {})
             delta_type = delta.get("type")
             if delta_type == "thinking_delta":
+                thinking_delta = delta.get("thinking", "") or delta.get("text", "") or ""
+                if thinking_delta and thinking_delta.strip():
+                    import re as _re_td
+                    cleaned_td = _re_td.sub(r"<think>.*?</think>", "", thinking_delta, flags=_re_td.DOTALL | _re_td.IGNORECASE)
+                    if "</think>" in thinking_delta:
+                        _, _, tail_td = thinking_delta.partition("</think>")
+                        cleaned_td = tail_td or cleaned_td
+                    cleaned_td = cleaned_td.strip()
+                    if cleaned_td:
+                        if state.item_type != "message":
+                            idx_td = state.next_output_index()
+                            state.item_type = "message"
+                            state.item_id = _new_item_id("msg")
+                            state.text_buffer = ""
+                            hdr_td = {"type": "message", "id": state.item_id, "role": "assistant", "status": "in_progress", "content": []}
+                            state.item_header = hdr_td
+                            yield _sse("response.output_item.added", {"type": "response.output_item.added", "sequence_number": seq, "output_index": idx_td, "item": hdr_td}); seq += 1
+                            yield _sse("response.content_part.added", {"type": "response.content_part.added", "sequence_number": seq, "item_id": state.item_id, "output_index": idx_td, "content_index": 0, "part": {"type": "output_text", "text": "", "annotations": []}}); seq += 1
+                        state.text_buffer += cleaned_td
+                        yield _sse("response.output_text.delta", {"type": "response.output_text.delta", "sequence_number": seq, "item_id": state.item_id, "output_index": state.output_index, "content_index": 0, "delta": cleaned_td}); seq += 1
                 continue
             index = state.output_index
 
@@ -772,9 +839,10 @@ async def anthropic_events_to_responses_stream(
 
 AGENTIC_NUDGE = (
     "CRITICAL: You are an autonomous coding agent. If you intend to inspect, "
-    "run, create or change anything, you MUST emit the corresponding tool call "
+    "run, create or change files, you MUST emit the corresponding tool call "
     "in this reply. Do NOT describe what you are about to do and stop — act by "
-    "calling the tool now."
+    "calling the tool now. Use exec_command or apply_patch; never output "
+    "tool calls as plain text (no <tool_call>, no functions.exec:)."
 )
 
 _INTENT_RE = re.compile(
@@ -801,11 +869,33 @@ def stream_events(events: List[SSEEvent]) -> AsyncIterator[SSEEvent]:
 
 
 def has_native_tool_call(events: List[SSEEvent]) -> bool:
-    return any(
+    if any(
         ev.data.get("type") == "content_block_start"
         and ev.data.get("content_block", {}).get("type") == "tool_use"
         for ev in events
-    )
+    ):
+        return True
+    for ev in events:
+        if ev.data.get("type") == "content_block_delta" and ev.data.get("delta", {}).get("type") == "input_json_delta":
+            if ev.data.get("delta", {}).get("partial_json"):
+                return True
+    return False
+
+
+def _is_garbled(text: str) -> bool:
+    if not text or len(text.strip()) < 80:
+        return False
+    alnum = sum(c.isalnum() for c in text)
+    ratio = alnum / max(len(text), 1)
+    if ratio < 0.35:
+        return True
+    repeating = any(text.count(substr) > 5 for substr in set(text.split()[:20]) if len(substr) > 8)
+    if repeating:
+        return True
+    words = text.split()
+    if len(words) > 12 and len(set(words)) < len(words) * 0.35:
+        return True
+    return False
 
 
 def stream_text(events: List[SSEEvent]) -> str:
