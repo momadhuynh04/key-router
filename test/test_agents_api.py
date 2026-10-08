@@ -162,9 +162,10 @@ def test_delete_last_agent_clears_default(client):
 # --------------------------------------------------------------- settings
 
 def test_update_settings_roots(client, env):
-    resp = client.post("/api/agents/settings", json={"allowed_roots": ["/tmp", "/var/tmp"]})
+    roots = [str(env["tmp_path"]), str(env["tmp_path"].parent)]
+    resp = client.post("/api/agents/settings", json={"allowed_roots": roots})
     assert resp.status_code == 200
-    assert resp.json()["settings"]["allowed_roots"] == ["/tmp", "/var/tmp"]
+    assert resp.json()["settings"]["allowed_roots"] == roots
 
 
 def test_update_settings_rejects_unknown_default_agent(client):
