@@ -33,6 +33,16 @@ webui/dist/
 # Agent / Internal
 # ========================
 .agent/PLAN.MD
+.commandcode/
+projects/
+
+# ========================
+# agent-bridge
+# ========================
+agents.json
+bridge/state.json
+bridge/.pid
+bridge.log
 
 # ========================
 # IDE & Editor

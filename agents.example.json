@@ -1,0 +1,68 @@
+{
+  "host": "127.0.0.1",
+  "port": 8083,
+  "token": "",
+  "key_router_url": "http://127.0.0.1:8082",
+  "allowed_roots": [
+    "/mnt/Data/ProjectStorage"
+  ],
+  "default_agent": "opus-probrowser",
+  "max_concurrent_runs": 2,
+  "turn_timeout_sec": 1800,
+  "allow_bypass": false,
+  "agents": [
+    {
+      "id": "opus-probrowser",
+      "name": "Opus @probrowser (edit)",
+      "cli": "claude",
+      "model": "opus",
+      "workdir": "/mnt/Data/ProjectStorage/probrowser",
+      "permission": "edit",
+      "effort": "high",
+      "tools": "edit",
+      "restricted": false,
+      "add_dirs": [],
+      "append_system_prompt": "",
+      "fallback_model": "",
+      "max_budget_usd": null,
+      "allowed_tools": [],
+      "disallowed_tools": []
+    },
+    {
+      "id": "opus-plan",
+      "name": "Opus @probrowser (read only)",
+      "cli": "claude",
+      "model": "opus",
+      "workdir": "/mnt/Data/ProjectStorage/probrowser",
+      "permission": "plan",
+      "effort": "high",
+      "tools": "readonly",
+      "restricted": false,
+      "add_dirs": [],
+      "append_system_prompt": "",
+      "fallback_model": "",
+      "max_budget_usd": null,
+      "allowed_tools": [],
+      "disallowed_tools": []
+    },
+    {
+      "id": "sonnet-probrowser",
+      "name": "Sonnet @probrowser (edit)",
+      "cli": "claude",
+      "model": "sonnet",
+      "workdir": "/mnt/Data/ProjectStorage/probrowser",
+      "permission": "edit",
+      "effort": "medium",
+      "tools": "edit",
+      "restricted": false,
+      "add_dirs": [],
+      "append_system_prompt": "",
+      "fallback_model": "haiku",
+      "max_budget_usd": null,
+      "allowed_tools": [],
+      "disallowed_tools": [
+        "Bash(git push *)"
+      ]
+    }
+  ]
+}

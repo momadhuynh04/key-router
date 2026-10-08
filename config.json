@@ -1,9 +1,9 @@
 {
   "model_mappings": {
-    "opus": "googleaistudio/gemini-3.1-flash-lite",
-    "sonnet": "googleaistudio/gemini-3.1-flash-lite",
-    "haiku": "googleaistudio/gemini-3.1-flash-lite",
-    "codex": "googleaistudio/gemini-3.1-flash-lite"
+    "opus": "openrouter/nex-agi/nex-n2.5-pro:free",
+    "sonnet": "openrouter/dots-studio/dots-3-note-preview:free",
+    "haiku": "openrouter/dots-studio/dots-3-note-preview:free",
+    "codex": "openrouter/nex-agi/nex-n2.5-pro:free"
   },
   "ide_detected": {
     "vscode": {
@@ -12,7 +12,7 @@
       "name": "VS Code",
       "config_dir": "Code",
       "supports_claude_extension": true,
-      "last_detected": "2026-09-08T20:17:08.062260"
+      "last_detected": "2026-09-18T17:00:19.699277"
     },
     "vscodium": {
       "binary": "/usr/bin/codium",
@@ -20,7 +20,7 @@
       "name": "VSCodium",
       "config_dir": "VSCodium",
       "supports_claude_extension": true,
-      "last_detected": "2026-09-08T20:17:08.239526"
+      "last_detected": "2026-09-18T17:00:19.866407"
     },
     "cursor": {
       "binary": "/usr/bin/cursor",
@@ -28,14 +28,14 @@
       "name": "Cursor",
       "config_dir": "Cursor",
       "supports_claude_extension": true,
-      "last_detected": "2026-09-08T20:17:08.451533"
+      "last_detected": "2026-09-18T17:00:20.093589"
     }
   },
   "codex_cli_detected": {
     "binary": "/usr/bin/codex",
     "version": "codex-cli 0.149.0",
     "name": "Codex CLI",
-    "last_detected": "2026-09-08T19:58:43.996587"
+    "last_detected": "2026-09-18T16:59:32.335579"
   },
   "custom_providers": {}
 }

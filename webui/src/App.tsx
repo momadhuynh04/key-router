@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import CustomProviderModal from './CustomProviderModal'
+import AgentModal from './AgentModal'
+import BridgePanel, { type BridgeSettings } from './BridgePanel'
+import type { Agent } from './AgentModal'
 
 function SearchableDropdown({ options, value, onChange, placeholder }: { options: string[], value: string, onChange: (val: string) => void, placeholder: string }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -79,7 +82,7 @@ function NavButton({ active, onClick, icon, label }: { active: boolean; onClick:
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'routing' | 'launcher'>('routing');
+  const [activeTab, setActiveTab] = useState<'routing' | 'launcher' | 'agents'>('routing');
   const [mappings, setMappings] = useState<Record<string, string>>({});
   const [sourceModel, setSourceModel] = useState("opus");
   const [provider, setProvider] = useState("openrouter");
@@ -95,6 +98,12 @@ function App() {
   const [isLoadingModels, setIsLoadingModels] = useState(true);
   const [customProviders, setCustomProviders] = useState<Record<string, any>>({});
   const [showCustomModal, setShowCustomModal] = useState(false);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [agentSettings, setAgentSettings] = useState<BridgeSettings | null>(null);
+  const [agentWarnings, setAgentWarnings] = useState<string[]>([]);
+  const [bridgeRunning, setBridgeRunning] = useState(false);
+  const [showAgentModal, setShowAgentModal] = useState(false);
+  const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
 
   const fetchMappings = () => {
     fetch('/api/models').then(r => r.json()).then(d => setMappings(d.mappings || {}));
@@ -108,6 +117,14 @@ function App() {
     fetch('/api/custom-providers').then(r => r.json()).then(d => setCustomProviders(d.providers || {})).catch(() => {});
   };
   useEffect(() => { fetchCustomProviders(); }, []);
+  const fetchAgents = () => {
+    fetch('/api/agents').then(r => r.json()).then(d => {
+      setAgents(d.agents || []);
+      setAgentSettings(d.settings || null);
+      setAgentWarnings(d.warnings || []);
+    }).catch(() => {});
+  };
+  useEffect(() => { fetchAgents(); }, []);
   useEffect(() => {
     setIsLoadingModels(true);
     fetch('/api/available-models').then(r => r.json()).then(d => { setAvailableModels(d); setIsLoadingModels(false); }).catch(() => setIsLoadingModels(false));
@@ -145,8 +162,17 @@ function App() {
 
   const currentProviderModels = availableModels[provider] || [];
 
+  const deleteAgent = async (id: string) => {
+    if (!confirm(`Delete agent "${id}"?`)) return;
+    try {
+      const res = await fetch(`/api/agents/${id}`, { method: 'DELETE' });
+      if (res.ok) fetchAgents();
+    } catch (e) { console.error(e); }
+  };
+
   const routingIcon = <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
   const launcherIcon = <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+  const agentsIcon = <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" /></svg>
 
   return (
     <div className="min-h-screen bg-surface-950 flex">
@@ -158,10 +184,15 @@ function App() {
             <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
             proxy · :8082
           </div>
+          <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-surface-850 border border-border px-3 py-1 text-xs text-text-muted">
+            <span className={`w-2 h-2 rounded-full ${bridgeRunning ? 'bg-success animate-pulse' : 'bg-text-muted'}`} />
+            bridge · :{agentSettings?.port ?? 8083}
+          </div>
         </div>
         <nav className="px-3 py-2 space-y-1 flex-1">
           <NavButton active={activeTab === 'routing'} onClick={() => setActiveTab('routing')} icon={routingIcon} label="Model routing" />
           <NavButton active={activeTab === 'launcher'} onClick={() => setActiveTab('launcher')} icon={launcherIcon} label="Agent launcher" />
+          <NavButton active={activeTab === 'agents'} onClick={() => setActiveTab('agents')} icon={agentsIcon} label="Agents" />
         </nav>
         <div className="px-4 py-4 border-t border-border">
           <a href="https://github.com/momadhuynh04/key-router.git" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-xs text-text-muted hover:text-text-secondary transition-colors">
@@ -283,9 +314,69 @@ function App() {
             </div>
           )}
 
+          {/* AGENTS */}
+          {activeTab === 'agents' && (
+            <div className="space-y-6">
+              <div className="rounded-2xl border border-border bg-surface-900 p-5 lg:p-6">
+                <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
+                  <div>
+                    <h2 className="text-[13px] font-semibold tracking-widest uppercase text-text-secondary">Agent config</h2>
+                    <p className="text-sm text-text-secondary mt-1.5 max-w-2xl leading-relaxed">
+                      Each agent is a CLI + model + workdir + permission combination. Pick one in Open WebUI with
+                      <code className="font-mono text-xs bg-surface-850 border border-border px-1.5 py-0.5 rounded mx-1">/start &lt;id&gt;</code>,
+                      stop it with <code className="font-mono text-xs bg-surface-850 border border-border px-1.5 py-0.5 rounded">/stop</code>.
+                    </p>
+                  </div>
+                  <button onClick={() => { setEditingAgent(null); setShowAgentModal(true); }} className="rounded-full border border-border bg-surface-850 hover:bg-surface-800 text-text-secondary text-xs font-medium px-4 py-1.5 transition-colors">+ Add agent</button>
+                </div>
+
+                {agentWarnings.length > 0 && (
+                  <div className="text-sm text-danger rounded-lg bg-danger/10 border border-danger/20 p-3 mb-4 space-y-1">
+                    {agentWarnings.map((w, i) => <p key={i}>{w}</p>)}
+                  </div>
+                )}
+
+                {agents.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-border bg-surface-850 py-10 text-center text-sm text-text-muted">
+                    No agents yet. Add one so Open WebUI has something to run.
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-border overflow-hidden divide-y divide-border bg-surface-850">
+                    {agents.map(a => (
+                      <div key={a.id} className="flex flex-wrap items-center gap-3 px-4 py-3 hover:bg-surface-800/50 transition-colors">
+                        <span className="inline-flex items-center rounded-full bg-brand-bg border border-brand-border text-brand text-xs font-mono px-3 py-1">{a.id}</span>
+                        {a.id === agentSettings?.default_agent && (
+                          <span className="text-[10px] uppercase tracking-wider text-text-muted border border-border rounded-full px-2 py-0.5">default</span>
+                        )}
+                        <span className="text-xs text-text-secondary font-medium">{a.cli}</span>
+                        <span className="text-xs text-text-muted">{a.model || '(default)'}</span>
+                        <span className="text-xs text-text-muted px-2 py-0.5 rounded-full border border-border">{a.permission}</span>
+                        <span className="text-xs text-text-muted">{a.effort}</span>
+                        <span className="text-xs text-text-muted font-mono truncate max-w-[220px]" title={a.workdir}>{a.workdir}</span>
+                        <div className="ml-auto flex gap-3">
+                          <button onClick={() => { setEditingAgent(a); setShowAgentModal(true); }} className="text-xs text-text-secondary hover:text-brand transition-colors">Edit</button>
+                          <button onClick={() => deleteAgent(a.id)} className="text-xs text-text-muted hover:text-danger transition-colors">Delete</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <BridgePanel
+                settings={agentSettings}
+                agentIds={agents.map(a => a.id)}
+                onSettingsChanged={fetchAgents}
+                onStatusChange={setBridgeRunning}
+              />
+            </div>
+          )}
+
         </main>
 
         {showCustomModal && <CustomProviderModal customProviders={customProviders} onClose={() => setShowCustomModal(false)} onSaved={() => { setShowCustomModal(false); fetchCustomProviders(); fetch('/api/available-models').then(r=>r.json()).then(d=>setAvailableModels(d)).catch(()=>{}); }} />}
+
+        {showAgentModal && <AgentModal agent={editingAgent} existingIds={agents.map(a => a.id)} allowedRoots={agentSettings?.allowed_roots || []} modelMappings={mappings} onClose={() => setShowAgentModal(false)} onSaved={() => { setShowAgentModal(false); fetchAgents(); }} />}
 
         <footer className="border-t border-border py-5 px-6">
           <div className="flex items-center justify-between gap-2 text-xs text-text-muted">
