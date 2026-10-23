@@ -1,9 +1,11 @@
 {
   "model_mappings": {
-    "opus": "openrouter/nex-agi/nex-n2.5-pro:free",
+    "opus": "openrouter/minimax/minimax-m3.1-flash:free",
     "sonnet": "openrouter/dots-studio/dots-3-note-preview:free",
     "haiku": "openrouter/dots-studio/dots-3-note-preview:free",
-    "codex": "openrouter/nex-agi/nex-n2.5-pro:free"
+    "codex": "openrouter/minimax/minimax-m3.1-flash:free",
+    "adcraft": "deepseekplatform/deepseek-flash",
+    "adcraft-image": "openrouter/qwen/qwen-image-2.1-turbo"
   },
   "ide_detected": {
     "vscode": {
@@ -12,7 +14,7 @@
       "name": "VS Code",
       "config_dir": "Code",
       "supports_claude_extension": true,
-      "last_detected": "2026-09-18T17:00:19.699277"
+      "last_detected": "2026-10-23T12:50:03.251326"
     },
     "vscodium": {
       "binary": "/usr/bin/codium",
@@ -20,7 +22,7 @@
       "name": "VSCodium",
       "config_dir": "VSCodium",
       "supports_claude_extension": true,
-      "last_detected": "2026-09-18T17:00:19.866407"
+      "last_detected": "2026-10-23T12:50:03.392719"
     },
     "cursor": {
       "binary": "/usr/bin/cursor",
@@ -28,14 +30,277 @@
       "name": "Cursor",
       "config_dir": "Cursor",
       "supports_claude_extension": true,
-      "last_detected": "2026-09-18T17:00:20.093589"
+      "last_detected": "2026-10-23T12:50:03.569174"
     }
   },
   "codex_cli_detected": {
     "binary": "/usr/bin/codex",
     "version": "codex-cli 0.149.0",
     "name": "Codex CLI",
-    "last_detected": "2026-09-18T16:59:32.335579"
+    "last_detected": "2026-10-23T12:44:05.008702"
   },
-  "custom_providers": {}
+  "custom_providers": {},
+  "image_models": {
+    "openrouter/google/gemini-2.5-flash-image": {
+      "backend": "openrouter",
+      "upstream_model": "google/gemini-2.5-flash-image",
+      "max_references": 3,
+      "aspect_ratio_mode": "ratio",
+      "supported_aspect_ratios": [
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "4:5",
+        "9:16",
+        "16:9"
+      ],
+      "output_format_field": "output_format"
+    },
+    "openrouter/qwen/qwen-image-2.1-turbo": {
+      "backend": "openrouter",
+      "upstream_model": "qwen/qwen-image-2.1-turbo",
+      "max_references": 4,
+      "aspect_ratio_mode": "ratio",
+      "supported_aspect_ratios": [
+        "1:1",
+        "16:9",
+        "9:16",
+        "4:3",
+        "3:4",
+        "2:3",
+        "3:2",
+        "4:5",
+        "5:4",
+        "1:2",
+        "2:1",
+        "1:4",
+        "4:1"
+      ],
+      "output_format_field": "output_format"
+    },
+    "replicate/black-forest-labs/flux-kontext-pro": {
+      "backend": "replicate",
+      "upstream_model": "black-forest-labs/flux-kontext-pro",
+      "max_references": 1,
+      "reference_field": "input_image",
+      "aspect_ratio_mode": "ratio",
+      "supported_aspect_ratios": [
+        "1:1",
+        "16:9",
+        "9:16",
+        "4:3",
+        "3:4"
+      ],
+      "output_format_field": "output_format"
+    },
+    "replicate/black-forest-labs/flux-1.1-pro": {
+      "backend": "replicate",
+      "upstream_model": "black-forest-labs/flux-1.1-pro",
+      "max_references": 0,
+      "aspect_ratio_mode": "ratio",
+      "supported_aspect_ratios": [
+        "1:1",
+        "16:9",
+        "9:16",
+        "4:3",
+        "3:4"
+      ],
+      "output_format_field": "output_format"
+    },
+    "replicate/black-forest-labs/flux-schnell": {
+      "backend": "replicate",
+      "upstream_model": "black-forest-labs/flux-schnell",
+      "max_references": 0,
+      "aspect_ratio_mode": "size",
+      "width_field": "width",
+      "height_field": "height",
+      "supported_aspect_ratios": [
+        "1:1",
+        "16:9",
+        "9:16",
+        "4:3",
+        "3:4"
+      ],
+      "output_format_field": "output_format"
+    }
+  },
+  "video_models": {
+    "adcraft-video": {
+      "driver": "modal_gateway",
+      "app": "minimax_h3",
+      "family": "minimax_h3_ref2va",
+      "quality_tier": "hero",
+      "provider": null,
+      "upstream_model": null,
+      "max_references": 9,
+      "duration_range": [
+        4,
+        15
+      ],
+      "resolutions": [
+        "480p",
+        "720p"
+      ],
+      "aspect_ratios": [
+        "16:9",
+        "9:16",
+        "1:1",
+        "4:3",
+        "3:4"
+      ],
+      "supports_native_audio": true,
+      "extra": {}
+    },
+    "adcraft-video-draft": {
+      "driver": "modal_gateway",
+      "app": "wan22",
+      "family": "wan22_ti2v_5b",
+      "quality_tier": "draft",
+      "max_references": 1,
+      "duration_range": [
+        1,
+        15
+      ],
+      "resolutions": [
+        "480p",
+        "720p"
+      ],
+      "aspect_ratios": [
+        "16:9",
+        "9:16",
+        "1:1",
+        "4:3",
+        "3:4"
+      ],
+      "supports_native_audio": false
+    },
+    "adcraft-video-draft-i2v": {
+      "driver": "modal_gateway",
+      "app": "wan22",
+      "family": "wan22_i2v_5b",
+      "quality_tier": "draft",
+      "max_references": 1,
+      "duration_range": [
+        1,
+        15
+      ],
+      "resolutions": [
+        "480p",
+        "720p"
+      ],
+      "aspect_ratios": [
+        "16:9",
+        "9:16",
+        "1:1",
+        "4:3",
+        "3:4"
+      ],
+      "supports_native_audio": false
+    },
+    "adcraft-video-standard": {
+      "driver": "modal_gateway",
+      "app": "wan22",
+      "family": "wan22_i2v_14b_4step",
+      "quality_tier": "standard",
+      "max_references": 1,
+      "duration_range": [
+        1,
+        15
+      ],
+      "resolutions": [
+        "480p",
+        "720p",
+        "1080p"
+      ],
+      "aspect_ratios": [
+        "16:9",
+        "9:16",
+        "1:1",
+        "4:3",
+        "3:4"
+      ],
+      "supports_native_audio": false
+    },
+    "adcraft-video-hero": {
+      "driver": "modal_gateway",
+      "app": "minimax_h3",
+      "family": "minimax_h3_ref2va",
+      "quality_tier": "hero",
+      "max_references": 9,
+      "duration_range": [
+        4,
+        15
+      ],
+      "resolutions": [
+        "480p",
+        "720p"
+      ],
+      "aspect_ratios": [
+        "16:9",
+        "9:16",
+        "1:1",
+        "4:3",
+        "3:4"
+      ],
+      "supports_native_audio": true
+    },
+    "adcraft-video-h3-fl2va": {
+      "driver": "modal_gateway",
+      "app": "minimax_h3",
+      "family": "minimax_h3_fl2va",
+      "quality_tier": "standard",
+      "max_references": 2,
+      "duration_range": [
+        4,
+        15
+      ],
+      "resolutions": [
+        "480p",
+        "720p"
+      ],
+      "aspect_ratios": [
+        "16:9",
+        "9:16",
+        "1:1",
+        "4:3",
+        "3:4"
+      ],
+      "supports_native_audio": true
+    },
+    "adcraft-video-h3-ref2va": {
+      "driver": "modal_gateway",
+      "app": "minimax_h3",
+      "family": "minimax_h3_ref2va",
+      "quality_tier": "hero",
+      "max_references": 9,
+      "duration_range": [
+        4,
+        15
+      ],
+      "resolutions": [
+        "480p",
+        "720p"
+      ],
+      "aspect_ratios": [
+        "16:9",
+        "9:16",
+        "1:1",
+        "4:3",
+        "3:4"
+      ],
+      "supports_native_audio": true
+    }
+  },
+  "audio_models": {
+    "adcraft-audio": {
+      "driver": "modal_gateway",
+      "app": "thinksound",
+      "family": "thinksound_light",
+      "quality_tier": "default",
+      "max_video_seconds": 15,
+      "response_format": "wav"
+    }
+  }
 }

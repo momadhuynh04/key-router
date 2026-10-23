@@ -93,6 +93,48 @@ def _sanitize_json_schema(node, is_cohere: bool = False):
             _sanitize_json_schema(item, is_cohere)
 
 
+def sanitize_response_format(response_format: Any) -> Dict[str, Any] | None:
+    """
+    Normalize an OpenAI `response_format` for upstream providers.
+
+    Many models — especially free tiers — reject `json_schema` mode outright, so
+    it is downgraded to `json_object` (still guarantees valid JSON). Unknown or
+    malformed specs are dropped so the model can answer freely. Returns None to
+    omit the field entirely.
+    """
+    if not isinstance(response_format, dict):
+        return None
+    rf_type = response_format.get("type")
+    if rf_type in ("json_object", "json_schema"):
+        return {"type": "json_object"}
+    return None
+
+
+def _ensure_json_hint(messages: List[Dict[str, Any]]) -> None:
+    """
+    JSON mode (`response_format: {"type": "json_object"}`) is only accepted by
+    OpenAI-compatible APIs (DeepSeek, OpenAI, …) when the word "json" appears in
+    the prompt — otherwise the upstream answers 400. Add a small system hint when
+    the caller did not already mention JSON.
+    """
+    def _as_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        try:
+            return json.dumps(content, ensure_ascii=False)
+        except Exception:
+            return str(content)
+
+    if any("json" in _as_text(m.get("content")).lower() for m in messages):
+        return
+    hint = "Respond with a single valid JSON object."
+    for m in messages:
+        if m.get("role") == "system" and isinstance(m.get("content"), str):
+            m["content"] = f"{m['content']}\n\n{hint}"
+            return
+    messages.insert(0, {"role": "system", "content": hint})
+
+
 def _anthropic_tools_to_openai(tools: List[Dict[str, Any]], is_cohere: bool = False) -> List[Dict[str, Any]]:
     """Convert Anthropic tool definitions to OpenAI function-calling format."""
     result = []
@@ -227,6 +269,14 @@ class OpenAIBaseProvider(BaseProvider):
                 elif t == "tool" and tc.get("name"):
                     body["tool_choice"] = {"type": "function", "function": {"name": tc["name"]}}
             body["parallel_tool_calls"] = True
+
+        # Structured output (AdCraft and other OpenAI clients): sanitize the
+        # response_format so unsupported modes never break the upstream call.
+        sanitized_rf = sanitize_response_format(getattr(anthropic_request, "response_format", None))
+        if sanitized_rf:
+            body["response_format"] = sanitized_rf
+            # JSON mode requires the word "json" in the prompt (DeepSeek/OpenAI).
+            _ensure_json_hint(messages)
 
         # thinking mode OFF — không inject reasoning_content nữa
 

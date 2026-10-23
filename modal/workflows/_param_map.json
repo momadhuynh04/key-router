@@ -1,0 +1,58 @@
+{
+  "wan22_ti2v_5b": {
+    "workflow": "wan22_ti2v_5b.json",
+    "output_node": "10",
+    "fps": 24,
+    "steps": 20,
+    "fallback_with_image": "wan22_i2v_5b",
+    "nodes": {
+      "prompt": { "node": "4", "input": "text" },
+      "negative_prompt": { "node": "5", "input": "text" },
+      "width": { "node": "6", "input": "width" },
+      "height": { "node": "6", "input": "height" },
+      "length": { "node": "6", "input": "length" },
+      "fps": { "node": "9", "input": "fps" },
+      "seed": { "node": "7", "input": "seed" },
+      "steps": { "node": "7", "input": "steps" }
+    }
+  },
+  "wan22_i2v_5b": {
+    "workflow": "wan22_i2v_5b.json",
+    "output_node": "10",
+    "fps": 24,
+    "steps": 20,
+    "requires_image": true,
+    "fallback_without_image": "wan22_ti2v_5b",
+    "nodes": {
+      "prompt": { "node": "4", "input": "text" },
+      "negative_prompt": { "node": "5", "input": "text" },
+      "width": { "node": "6", "input": "width" },
+      "height": { "node": "6", "input": "height" },
+      "length": { "node": "6", "input": "length" },
+      "fps": { "node": "9", "input": "fps" },
+      "seed": { "node": "7", "input": "seed" },
+      "steps": { "node": "7", "input": "steps" },
+      "first_image": { "node": "20", "input": "image" }
+    }
+  },
+  "wan22_i2v_14b_4step": {
+    "workflow": "wan22_i2v_14b_4step.json",
+    "output_node": "10",
+    "fps": 16,
+    "steps": 4,
+    "requires_image": true,
+    "fallback_without_image": "wan22_ti2v_5b",
+    "nodes": {
+      "prompt": { "node": "4", "input": "text" },
+      "negative_prompt": { "node": "5", "input": "text" },
+      "width": { "node": "6", "input": "width" },
+      "height": { "node": "6", "input": "height" },
+      "length": { "node": "6", "input": "length" },
+      "fps": { "node": "9", "input": "fps" },
+      "seed": { "node": "7", "input": "noise_seed" },
+      "steps": { "node": "7", "input": "steps" },
+      "steps_low_stage": { "node": "14", "inputs": { "steps": "steps" } },
+      "first_image": { "node": "20", "input": "image" }
+    }
+  }
+}

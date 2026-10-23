@@ -17,6 +17,7 @@ class OpenAIRequest(BaseModel):
     stop: Optional[Union[str, List[str]]] = None
     tools: Optional[List[Dict[str, Any]]] = None
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
+    response_format: Optional[Dict[str, Any]] = None
     model_config = {"extra": "allow"}
 
 class ResponsesRequest(BaseModel):

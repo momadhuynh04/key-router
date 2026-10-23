@@ -4,6 +4,150 @@ import AgentModal from './AgentModal'
 import BridgePanel, { type BridgeSettings } from './BridgePanel'
 import type { Agent } from './AgentModal'
 
+type AdCraftStatus = {
+  alias: string;
+  mapping: string | null;
+  provider: string | null;
+  model: string | null;
+  configured: boolean;
+  endpoint: string;
+  chat_completions_url: string;
+  api_key: string;
+  api_key_env?: string;
+}
+
+type AdCraftTestResult = {
+  status: string;
+  error?: string;
+  target_model?: string | null;
+  response_format_sent?: { type: string } | null;
+  tool_called?: boolean;
+  finish_reason?: string;
+  content?: string | null;
+  tool_calls?: Array<{ function?: { name?: string; arguments?: string } }>;
+  usage?: Record<string, number>;
+}
+
+type ImageModelOption = {
+  id: string;
+  name: string;
+  target: string;
+  max_references: number;
+  aspect_ratios: string[];
+  supports_output_format: boolean;
+}
+
+type AdCraftImageStatus = {
+  alias: string;
+  mapping: string | null;
+  backend: string | null;
+  upstream_model: string | null;
+  configured: boolean;
+  endpoint: string;
+  alias_endpoint: string;
+  api_key: string;
+  api_key_env?: string;
+  openrouter_configured: boolean;
+  replicate_configured: boolean;
+}
+
+type AdCraftImageTestResult = {
+  status: string;
+  error?: { code?: string; message?: string };
+  b64_json?: string;
+  media_type?: string;
+  elapsed_ms?: number;
+  bytes?: number;
+  width?: number | null;
+  height?: number | null;
+  backend?: string;
+  upstream_model?: string;
+  references_used?: number;
+  with_reference?: boolean;
+  http_status?: number;
+}
+
+type VideoProfileOption = {
+  id: string;
+  name: string;
+  driver: string;
+  family: string | null;
+  quality_tier: string | null;
+  max_references: number | null;
+  resolutions: string[] | null;
+  aspect_ratios: string[] | null;
+  duration_range: number[] | null;
+  supports_native_audio: boolean | null;
+  current?: boolean;
+}
+
+type AdCraftVideoStatus = {
+  alias: string;
+  configured: boolean;
+  driver: string | null;
+  family: string | null;
+  quality_tier: string | null;
+  endpoint: string;
+  content_endpoint: string;
+  api_key: string;
+  auth_required: boolean;
+  gateway_configured: boolean;
+  gateway_url: string | null;
+}
+
+type VideoJobView = {
+  id: string;
+  status: string;
+  progress?: number;
+  output?: { url?: string; resolution?: string; duration_seconds?: number; seed?: number } | null;
+  usage?: Record<string, number | string | null> | null;
+  error?: { code?: string; message?: string } | null;
+}
+
+type AdCraftVideoTestResult = {
+  status: string;
+  error?: { code?: string; message?: string };
+  job?: VideoJobView;
+  http_status?: number;
+  with_reference?: boolean;
+}
+
+type AudioJobView = {
+  id: string;
+  status: string;
+  progress?: number;
+  output?: {
+    url?: string;
+    duration_seconds?: number;
+    sample_rate?: number;
+    channels?: number;
+    size_bytes?: number;
+  } | null;
+  usage?: Record<string, number | string | null> | null;
+  error?: { code?: string; message?: string } | null;
+}
+
+type AdCraftAudioStatus = {
+  alias: string;
+  configured: boolean;
+  driver: string | null;
+  family: string | null;
+  endpoint: string;
+  api_key: string;
+  auth_required: boolean;
+  gateway_configured: boolean;
+  gateway_url: string | null;
+  video_allow_hosts: string;
+}
+
+type AdCraftAudioTestResult = {
+  status: string;
+  error?: { code?: string; message?: string };
+  job?: AudioJobView;
+  video_source?: string | null;
+  http_status?: number;
+}
+
 function SearchableDropdown({ options, value, onChange, placeholder }: { options: string[], value: string, onChange: (val: string) => void, placeholder: string }) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -81,8 +225,18 @@ function NavButton({ active, onClick, icon, label }: { active: boolean; onClick:
   )
 }
 
+type AdCraftSection = 'chat' | 'image' | 'video' | 'sfx'
+
+const ADCRAFT_SECTIONS: { id: AdCraftSection; label: string }[] = [
+  { id: 'chat', label: 'Chat' },
+  { id: 'image', label: 'Image' },
+  { id: 'video', label: 'Video' },
+  { id: 'sfx', label: 'SFX' },
+]
+
 function App() {
-  const [activeTab, setActiveTab] = useState<'routing' | 'launcher' | 'agents'>('routing');
+  const [activeTab, setActiveTab] = useState<'routing' | 'launcher' | 'agents' | 'adcraft'>('routing');
+  const [adcraftSection, setAdcraftSection] = useState<AdCraftSection>('chat');
   const [mappings, setMappings] = useState<Record<string, string>>({});
   const [sourceModel, setSourceModel] = useState("opus");
   const [provider, setProvider] = useState("openrouter");
@@ -104,6 +258,192 @@ function App() {
   const [bridgeRunning, setBridgeRunning] = useState(false);
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+  const [adcraft, setAdcraft] = useState<AdCraftStatus | null>(null);
+  const [adcraftProvider, setAdcraftProvider] = useState("openrouter");
+  const [adcraftModel, setAdcraftModel] = useState("");
+  const [adcraftSaving, setAdcraftSaving] = useState(false);
+  const [adcraftTesting, setAdcraftTesting] = useState(false);
+  const [adcraftTestResult, setAdcraftTestResult] = useState<AdCraftTestResult | null>(null);
+
+  const fetchAdcraft = () => {
+    fetch('/api/adcraft/status').then(r => r.json()).then(d => {
+      setAdcraft(d);
+      if (d.provider) setAdcraftProvider(d.provider);
+    }).catch(() => {});
+  };
+  useEffect(() => { fetchAdcraft(); }, []);
+
+  const saveAdcraftModel = async () => {
+    if (!adcraftModel) return;
+    const cleanTarget = adcraftModel.startsWith(adcraftProvider + "/") ? adcraftModel.replace(adcraftProvider + "/", "") : adcraftModel;
+    setAdcraftSaving(true);
+    try {
+      const res = await fetch('/api/adcraft/model', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target: `${adcraftProvider}/${cleanTarget}` }) });
+      const d = await res.json();
+      if (d.status === 'success') { setAdcraft(d); setAdcraftModel(""); }
+      else { alert(d.detail || d.error || 'Failed to save AdCraft model'); }
+    } catch (e) { console.error(e); }
+    setAdcraftSaving(false);
+  };
+
+  const testAdcraft = async () => {
+    setAdcraftTesting(true);
+    setAdcraftTestResult(null);
+    try {
+      const res = await fetch('/api/adcraft/test', { method: 'POST' });
+      setAdcraftTestResult(await res.json());
+      fetchAdcraft();
+    } catch (e) { setAdcraftTestResult({ status: 'error', error: String(e) }); }
+    setAdcraftTesting(false);
+  };
+
+  const [adcraftImage, setAdcraftImage] = useState<AdCraftImageStatus | null>(null);
+  const [imageModels, setImageModels] = useState<{ openrouter: ImageModelOption[]; replicate: ImageModelOption[] }>({ openrouter: [], replicate: [] });
+  const [imageProvider, setImageProvider] = useState("openrouter");
+  const [imageModel, setImageModel] = useState("");
+  const [imageSaving, setImageSaving] = useState(false);
+  const [imageTesting, setImageTesting] = useState(false);
+  const [imageTestResult, setImageTestResult] = useState<AdCraftImageTestResult | null>(null);
+
+  const fetchAdcraftImage = () => {
+    fetch('/api/adcraft-image/status').then(r => r.json()).then(d => {
+      setAdcraftImage(d);
+      if (d.backend) setImageProvider(d.backend);
+    }).catch(() => {});
+    fetch('/api/adcraft-image/models').then(r => r.json()).then(d => {
+      setImageModels({ openrouter: d.openrouter || [], replicate: d.replicate || [] });
+    }).catch(() => {});
+  };
+  useEffect(() => { fetchAdcraftImage(); }, []);
+
+  const saveImageModel = async () => {
+    if (!imageModel) return;
+    const options = imageModels[imageProvider as 'openrouter' | 'replicate'] || [];
+    const selected = options.find(o => o.id === imageModel);
+    const target = selected ? selected.target : `${imageProvider}/${imageModel}`;
+    setImageSaving(true);
+    try {
+      const res = await fetch('/api/adcraft-image/model', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target }) });
+      const d = await res.json();
+      if (d.status === 'success') { setAdcraftImage(d); setImageModel(""); }
+      else { alert(d.detail || d.error || 'Failed to save image model'); }
+    } catch (e) { console.error(e); }
+    setImageSaving(false);
+  };
+
+  const testImage = async (withReference: boolean) => {
+    setImageTesting(true);
+    setImageTestResult(null);
+    try {
+      const res = await fetch('/api/adcraft-image/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ with_reference: withReference }) });
+      setImageTestResult(await res.json());
+      fetchAdcraftImage();
+    } catch (e) {
+      setImageTestResult({ status: 'error', error: { code: 'request_failed', message: String(e) }, with_reference: withReference });
+    }
+    setImageTesting(false);
+  };
+
+  const [videoStatus, setVideoStatus] = useState<AdCraftVideoStatus | null>(null);
+  const [videoProfiles, setVideoProfiles] = useState<VideoProfileOption[]>([]);
+  const [videoProfile, setVideoProfile] = useState("");
+  const [videoSaving, setVideoSaving] = useState(false);
+  const [videoTesting, setVideoTesting] = useState(false);
+  const [videoTestResult, setVideoTestResult] = useState<AdCraftVideoTestResult | null>(null);
+  const [videoJobs, setVideoJobs] = useState<VideoJobView[]>([]);
+
+  const fetchVideo = () => {
+    fetch('/api/adcraft-video/status').then(r => r.json()).then(setVideoStatus).catch(() => {});
+    fetch('/api/adcraft-video/models').then(r => r.json()).then(d => setVideoProfiles(d.models || [])).catch(() => {});
+    fetch('/api/adcraft-video/jobs?limit=5').then(r => r.json()).then(d => setVideoJobs(d.jobs || [])).catch(() => {});
+  };
+  useEffect(() => { fetchVideo(); }, []);
+
+  const saveVideoProfile = async () => {
+    if (!videoProfile) return;
+    setVideoSaving(true);
+    try {
+      const res = await fetch('/api/adcraft-video/model', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target: videoProfile }) });
+      const d = await res.json();
+      if (d.status === 'success') { setVideoStatus(d); setVideoProfile(""); fetchVideo(); }
+      else { alert(d.detail || 'Failed to save video profile'); }
+    } catch (e) { console.error(e); }
+    setVideoSaving(false);
+  };
+
+  const testVideo = async (withReference: boolean) => {
+    setVideoTesting(true);
+    setVideoTestResult(null);
+    try {
+      const res = await fetch('/api/adcraft-video/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wait_seconds: 0, with_reference: withReference }) });
+      const data = await res.json();
+      setVideoTestResult(data);
+
+      // Poll the job until it finishes (cold start + generation can take ~2 min).
+      const jobId = data?.job?.id;
+      if (jobId) {
+        const deadline = Date.now() + 15 * 60 * 1000;
+        while (Date.now() < deadline) {
+          await new Promise(r => setTimeout(r, 3000));
+          const jr = await fetch(`/api/adcraft-video/jobs/${jobId}`);
+          if (!jr.ok) break;
+          const job = await jr.json();
+          setVideoTestResult(prev => ({
+            ...(prev || {}),
+            status: job.status === 'completed' ? 'completed' : 'pending',
+            job,
+          }));
+          if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') break;
+        }
+      }
+      fetchVideo();
+    } catch (e) {
+      setVideoTestResult({ status: 'error', error: { code: 'request_failed', message: String(e) } });
+    }
+    setVideoTesting(false);
+  };
+
+  const [audioStatus, setAudioStatus] = useState<AdCraftAudioStatus | null>(null);
+  const [audioTesting, setAudioTesting] = useState(false);
+  const [audioTestResult, setAudioTestResult] = useState<AdCraftAudioTestResult | null>(null);
+  const [audioJobs, setAudioJobs] = useState<AudioJobView[]>([]);
+
+  const fetchAudio = () => {
+    fetch('/api/adcraft-audio/status').then(r => r.json()).then(setAudioStatus).catch(() => {});
+    fetch('/api/adcraft-audio/jobs?limit=5').then(r => r.json()).then(d => setAudioJobs(d.jobs || [])).catch(() => {});
+  };
+  useEffect(() => { fetchAudio(); }, []);
+
+  const testAudio = async () => {
+    setAudioTesting(true);
+    setAudioTestResult(null);
+    try {
+      const res = await fetch('/api/adcraft-audio/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wait_seconds: 0 }) });
+      const data = await res.json();
+      setAudioTestResult(data);
+
+      const jobId = data?.job?.id;
+      if (jobId) {
+        const deadline = Date.now() + 15 * 60 * 1000;
+        while (Date.now() < deadline) {
+          await new Promise(r => setTimeout(r, 3000));
+          const jr = await fetch(`/api/adcraft-audio/jobs/${jobId}`);
+          if (!jr.ok) break;
+          const job = await jr.json();
+          setAudioTestResult(prev => ({
+            ...(prev || {}),
+            status: job.status === 'succeeded' ? 'succeeded' : 'pending',
+            job,
+          }));
+          if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled') break;
+        }
+      }
+      fetchAudio();
+    } catch (e) {
+      setAudioTestResult({ status: 'error', error: { code: 'request_failed', message: String(e) } });
+    }
+    setAudioTesting(false);
+  };
 
   const fetchMappings = () => {
     fetch('/api/models').then(r => r.json()).then(d => setMappings(d.mappings || {}));
@@ -173,6 +513,7 @@ function App() {
   const routingIcon = <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
   const launcherIcon = <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
   const agentsIcon = <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" /></svg>
+  const adcraftIcon = <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-2.36A.75.75 0 0121.75 9v6a.75.75 0 01-1.28.55l-4.72-4.05zM3.75 6.75h9A2.25 2.25 0 0115 9v6a2.25 2.25 0 01-2.25 2.25h-9A2.25 2.25 0 011.5 15V9a2.25 2.25 0 012.25-2.25z" /></svg>
 
   return (
     <div className="min-h-screen bg-surface-950 flex">
@@ -193,6 +534,7 @@ function App() {
           <NavButton active={activeTab === 'routing'} onClick={() => setActiveTab('routing')} icon={routingIcon} label="Model routing" />
           <NavButton active={activeTab === 'launcher'} onClick={() => setActiveTab('launcher')} icon={launcherIcon} label="Agent launcher" />
           <NavButton active={activeTab === 'agents'} onClick={() => setActiveTab('agents')} icon={agentsIcon} label="Agents" />
+          <NavButton active={activeTab === 'adcraft'} onClick={() => setActiveTab('adcraft')} icon={adcraftIcon} label="AdCraft" />
         </nav>
         <div className="px-4 py-4 border-t border-border">
           <a href="https://github.com/momadhuynh04/key-router.git" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-xs text-text-muted hover:text-text-secondary transition-colors">
@@ -258,6 +600,438 @@ function App() {
                   </div>
                   <button onClick={addMapping} disabled={!targetModel} className="h-9 rounded-full bg-brand text-white hover:bg-brand-muted disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium px-6 transition-colors">Save route</button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* ADCRAFT SECTION NAV */}
+          {activeTab === 'adcraft' && (
+            <div className="inline-flex flex-wrap p-1 mb-6 bg-surface-850 rounded-full border border-border gap-1">
+              {ADCRAFT_SECTIONS.map(s => (
+                <button key={s.id} onClick={() => setAdcraftSection(s.id)} className={`px-4 py-1.5 rounded-full text-xs font-medium transition-colors ${adcraftSection === s.id ? 'bg-white text-surface-950 shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}>{s.label}</button>
+              ))}
+            </div>
+          )}
+
+          {/* ADCRAFT */}
+          {activeTab === 'adcraft' && adcraftSection === 'chat' && (
+            <div className="space-y-6">
+              <div className="border border-border bg-surface-900 p-6 rounded-2xl">
+                <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
+                  <div>
+                    <h2 className="text-[13px] font-semibold tracking-widest uppercase text-text-secondary">AdCraft integration</h2>
+                    <p className="text-sm text-text-secondary mt-1.5 max-w-2xl leading-relaxed">
+                      Point AdCraft at the proxy and it only ever needs to send <code className="font-mono text-xs bg-surface-850 border border-border px-1.5 py-0.5 rounded">model: "adcraft"</code>. The real target model is chosen here.
+                    </p>
+                  </div>
+                  <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${adcraft?.configured ? 'border-success/30 bg-success/10 text-success' : 'border-border bg-surface-850 text-text-muted'}`}>
+                    <span className={`w-2 h-2 rounded-full ${adcraft?.configured ? 'bg-success animate-pulse' : 'bg-text-muted'}`} />
+                    {adcraft?.configured ? 'Active' : 'Not configured'}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-border overflow-hidden divide-y divide-border bg-surface-850">
+                  <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+                    <span className="inline-flex items-center rounded-full bg-accent-bg border border-accent-border text-accent text-xs font-medium px-3 py-1 font-mono">ADCRAFT</span>
+                    <span className="text-text-muted">→</span>
+                    <span className="inline-flex items-center rounded-full bg-brand-bg border border-brand-border text-brand text-xs font-mono px-3 py-1 break-all">{adcraft?.mapping || 'not set'}</span>
+                  </div>
+                  <div className="px-4 py-3 text-xs text-text-muted font-mono break-all space-y-1">
+                    <div>
+                      AdCraft endpoint → <span className="text-text-secondary">{adcraft?.endpoint || 'http://127.0.0.1:8082/v1'}</span>
+                      <span> · POST </span>
+                      <span className="text-text-secondary">{adcraft?.chat_completions_url || 'http://127.0.0.1:8082/v1/chat/completions'}</span>
+                    </div>
+                    <div>
+                      API key → <span className="text-text-secondary">{adcraft?.api_key || 'key-router'}</span>
+                      <span className="font-sans"> (any value works — the proxy performs no auth)</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl bg-surface-850 border border-border p-5 mt-6">
+                  <h3 className="text-xs font-semibold tracking-widest uppercase text-text-secondary mb-4">Target model for AdCraft</h3>
+                  <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.7fr_auto] gap-4 items-end">
+                    <div>
+                      <label className="block text-[11px] font-medium tracking-widest uppercase text-text-secondary mb-1.5">Target provider</label>
+                      <select value={adcraftProvider} onChange={e => { setAdcraftProvider(e.target.value); setAdcraftModel(""); }} className="w-full h-9 rounded-lg bg-surface-900 border border-border px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand">
+                        <option value="openrouter">OPENROUTER</option>
+                        <option value="deepseekplatform">DEEPSEEK</option>
+                        <option value="googleaistudio">GOOGLE</option>
+                        {Object.keys(customProviders).map(id => (
+                          <option key={id} value={id}>{customProviders[id].display_name || id}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-[11px] font-medium tracking-widest uppercase text-text-secondary">Target model</label>
+                        {isLoadingModels && <span className="text-xs text-text-muted animate-blink">Loading…</span>}
+                      </div>
+                      <SearchableDropdown options={availableModels[adcraftProvider] || []} value={adcraftModel} onChange={setAdcraftModel} placeholder="Search and select a model…" />
+                    </div>
+                    <button onClick={saveAdcraftModel} disabled={!adcraftModel || adcraftSaving} className="h-9 rounded-full bg-brand text-white hover:bg-brand-muted disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium px-6 transition-colors">{adcraftSaving ? 'Saving…' : 'Save'}</button>
+                  </div>
+                </div>
+
+                <div className="rounded-xl bg-surface-850 border border-border p-5 mt-6">
+                  <div className="flex flex-wrap items-center justify-between gap-4 mb-3">
+                    <h3 className="text-xs font-semibold tracking-widest uppercase text-text-secondary">Connection test</h3>
+                    <button onClick={testAdcraft} disabled={adcraftTesting || !adcraft?.configured} className="rounded-full border border-border bg-surface-900 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed text-text-secondary text-xs font-medium px-4 py-1.5 transition-colors">{adcraftTesting ? 'Testing…' : 'Run test'}</button>
+                  </div>
+                  <p className="text-xs text-text-muted leading-relaxed mb-3">Sends a simulated AdCraft request through the proxy: <code className="font-mono">response_format: json_object</code> plus the <code className="font-mono">submit_structured_result</code> tool.</p>
+                  {adcraftTestResult && (
+                    <div className={`rounded-lg border p-3 text-xs space-y-1.5 ${adcraftTestResult.status === 'success' ? 'border-success/20 bg-success/10' : 'border-danger/20 bg-danger/10'}`}>
+                      {adcraftTestResult.status === 'success' ? (
+                        <>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-text-secondary">
+                            <span className={`font-semibold ${adcraftTestResult.tool_called ? 'text-success' : 'text-accent'}`}>{adcraftTestResult.tool_called ? '✓ tool called' : '⚠ no tool call'}</span>
+                            <span className="text-text-muted">model: <span className="font-mono">{adcraftTestResult.target_model}</span></span>
+                            <span className="text-text-muted">finish: <span className="font-mono">{adcraftTestResult.finish_reason}</span></span>
+                            <span className="text-text-muted">response_format: <span className="font-mono">{adcraftTestResult.response_format_sent?.type || 'none'}</span></span>
+                          </div>
+                          {adcraftTestResult.tool_calls && adcraftTestResult.tool_calls.length > 0 && (
+                            <pre className="font-mono text-[11px] text-text-secondary bg-surface-900 border border-border rounded p-2 overflow-x-auto whitespace-pre-wrap break-all">{adcraftTestResult.tool_calls.map(tc => `${tc.function?.name}(${tc.function?.arguments})`).join('\n')}</pre>
+                          )}
+                          {adcraftTestResult.content && (
+                            <p className="text-text-muted whitespace-pre-wrap break-words">{adcraftTestResult.content}</p>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-danger break-words">{adcraftTestResult.error || 'Test failed'}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ADCRAFT IMAGE */}
+          {activeTab === 'adcraft' && adcraftSection === 'image' && (
+            <div className="space-y-6">
+              <div className="border border-border bg-surface-900 p-6 rounded-2xl">
+                <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
+                  <div>
+                    <h2 className="text-[13px] font-semibold tracking-widest uppercase text-text-secondary">AdCraft image</h2>
+                    <p className="text-sm text-text-secondary mt-1.5 max-w-2xl leading-relaxed">
+                      AdCraft sends image requests with <code className="font-mono text-xs bg-surface-850 border border-border px-1.5 py-0.5 rounded">model: "adcraft-image"</code>. The real backend and model are chosen here.
+                    </p>
+                  </div>
+                  <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${adcraftImage?.configured ? 'border-success/30 bg-success/10 text-success' : 'border-border bg-surface-850 text-text-muted'}`}>
+                    <span className={`w-2 h-2 rounded-full ${adcraftImage?.configured ? 'bg-success animate-pulse' : 'bg-text-muted'}`} />
+                    {adcraftImage?.configured ? 'Active' : 'Not configured'}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-border overflow-hidden divide-y divide-border bg-surface-850">
+                  <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+                    <span className="inline-flex items-center rounded-full bg-accent-bg border border-accent-border text-accent text-xs font-medium px-3 py-1 font-mono">ADCRAFT-IMAGE</span>
+                    <span className="text-text-muted">→</span>
+                    <span className="inline-flex items-center rounded-full bg-brand-bg border border-brand-border text-brand text-xs font-mono px-3 py-1 break-all">{adcraftImage?.mapping || 'not set'}</span>
+                  </div>
+                  <div className="px-4 py-3 text-xs text-text-muted font-mono break-all space-y-1">
+                    <div>
+                      AdCraft endpoint → <span className="text-text-secondary">{adcraftImage?.endpoint || 'http://127.0.0.1:8082/v1/images/generations'}</span>
+                      <span> · alias </span>
+                      <span className="text-text-secondary">{adcraftImage?.alias_endpoint || 'http://127.0.0.1:8082/v1/images'}</span>
+                    </div>
+                    <div>
+                      API key → <span className="text-text-secondary">{adcraftImage?.api_key || 'key-router'}</span>
+                      <span className="font-sans"> (any value works — the proxy performs no auth)</span>
+                    </div>
+                    <div className="font-sans">
+                      Backend keys →{' '}
+                      <span className={adcraftImage?.openrouter_configured ? 'text-success' : 'text-danger'}>{adcraftImage?.openrouter_configured ? 'OpenRouter ✓' : 'OpenRouter missing'}</span>
+                      <span className="text-text-muted"> · </span>
+                      <span className={adcraftImage?.replicate_configured ? 'text-success' : 'text-danger'}>{adcraftImage?.replicate_configured ? 'Replicate ✓' : 'Replicate token missing'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl bg-surface-850 border border-border p-5 mt-6">
+                  <h3 className="text-xs font-semibold tracking-widest uppercase text-text-secondary mb-4">Image model for AdCraft</h3>
+                  <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.7fr_auto] gap-4 items-end">
+                    <div>
+                      <label className="block text-[11px] font-medium tracking-widest uppercase text-text-secondary mb-1.5">Backend</label>
+                      <select value={imageProvider} onChange={e => { setImageProvider(e.target.value); setImageModel(""); }} className="w-full h-9 rounded-lg bg-surface-900 border border-border px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand">
+                        <option value="openrouter">OPENROUTER</option>
+                        <option value="replicate">REPLICATE</option>
+                      </select>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-[11px] font-medium tracking-widest uppercase text-text-secondary">Model</label>
+                        <span className="text-xs text-text-muted">{(imageModels[imageProvider as 'openrouter' | 'replicate'] || []).length} available</span>
+                      </div>
+                      <SearchableDropdown options={(imageModels[imageProvider as 'openrouter' | 'replicate'] || []).map(o => o.id)} value={imageModel} onChange={setImageModel} placeholder="Search and select an image model…" />
+                    </div>
+                    <button onClick={saveImageModel} disabled={!imageModel || imageSaving} className="h-9 rounded-full bg-brand text-white hover:bg-brand-muted disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium px-6 transition-colors">{imageSaving ? 'Saving…' : 'Save'}</button>
+                  </div>
+                </div>
+
+                <div className="rounded-xl bg-surface-850 border border-border p-5 mt-6">
+                  <div className="flex flex-wrap items-center justify-between gap-4 mb-3">
+                    <h3 className="text-xs font-semibold tracking-widest uppercase text-text-secondary">Connection test</h3>
+                    <div className="flex gap-2">
+                      <button onClick={() => testImage(false)} disabled={imageTesting || !adcraftImage?.configured} className="rounded-full border border-border bg-surface-900 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed text-text-secondary text-xs font-medium px-4 py-1.5 transition-colors">{imageTesting ? 'Testing…' : 'Run test'}</button>
+                      <button onClick={() => testImage(true)} disabled={imageTesting || !adcraftImage?.configured} className="rounded-full border border-border bg-surface-900 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed text-text-secondary text-xs font-medium px-4 py-1.5 transition-colors">Test with reference</button>
+                    </div>
+                  </div>
+                  <p className="text-xs text-text-muted leading-relaxed mb-3">Generates a small 1:1 test image. The reference test sends a tiny reference image to verify the backend accepts references.</p>
+
+                  {imageTestResult && (
+                    imageTestResult.status === 'success' && imageTestResult.b64_json ? (
+                      <div className="rounded-lg border border-success/20 bg-success/10 p-3">
+                        <div className="flex flex-wrap gap-4 items-start">
+                          <img
+                            src={`data:${imageTestResult.media_type || 'image/png'};base64,${imageTestResult.b64_json}`}
+                            alt="AdCraft image test"
+                            className="rounded-lg border border-border max-w-[320px] max-h-[320px] object-contain bg-surface-900"
+                          />
+                          <div className="text-xs space-y-1 text-text-secondary">
+                            <div>backend: <span className="font-mono text-brand">{imageTestResult.backend}</span></div>
+                            <div>model: <span className="font-mono text-brand">{imageTestResult.upstream_model}</span></div>
+                            <div>time: <span className="font-mono">{imageTestResult.elapsed_ms} ms</span></div>
+                            <div>size: <span className="font-mono">{imageTestResult.width ?? '?'}×{imageTestResult.height ?? '?'} · {(Number(imageTestResult.bytes || 0) / 1024).toFixed(1)} KB</span></div>
+                            <div>references used: <span className="font-mono">{imageTestResult.references_used ?? 0}</span>{imageTestResult.with_reference ? ' (reference test)' : ''}</div>
+                            <div>media: <span className="font-mono">{imageTestResult.media_type}</span></div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-danger/20 bg-danger/10 p-3 text-xs text-danger break-words">
+                        <span className="font-mono">{imageTestResult.error?.code || 'error'}</span>
+                        {imageTestResult.http_status ? <span className="text-text-muted"> · HTTP {imageTestResult.http_status}</span> : null}
+                        <div className="mt-1 text-danger/90">{imageTestResult.error?.message || 'Test failed'}</div>
+                      </div>
+                    )
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ADCRAFT VIDEO */}
+          {activeTab === 'adcraft' && adcraftSection === 'video' && (
+            <div className="space-y-6">
+              <div className="border border-border bg-surface-900 p-6 rounded-2xl">
+                <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
+                  <div>
+                    <h2 className="text-[13px] font-semibold tracking-widest uppercase text-text-secondary">AdCraft video</h2>
+                    <p className="text-sm text-text-secondary mt-1.5 max-w-2xl leading-relaxed">
+                      Async route: AdCraft sends <code className="font-mono text-xs bg-surface-850 border border-border px-1.5 py-0.5 rounded">model: "adcraft-video"</code> to <span className="font-mono text-xs">{videoStatus?.endpoint || 'http://127.0.0.1:8082/v1/videos'}</span> then polls. The real backend is chosen here.
+                    </p>
+                  </div>
+                  <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${videoStatus?.configured ? 'border-success/30 bg-success/10 text-success' : 'border-border bg-surface-850 text-text-muted'}`}>
+                    <span className={`w-2 h-2 rounded-full ${videoStatus?.configured ? 'bg-success animate-pulse' : 'bg-text-muted'}`} />
+                    {videoStatus?.configured ? 'Configured' : 'Not configured'}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-border overflow-hidden divide-y divide-border bg-surface-850">
+                  <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+                    <span className="inline-flex items-center rounded-full bg-accent-bg border border-accent-border text-accent text-xs font-medium px-3 py-1 font-mono">ADCRAFT-VIDEO</span>
+                    <span className="text-text-muted">→</span>
+                    <span className="inline-flex items-center rounded-full bg-brand-bg border border-brand-border text-brand text-xs font-mono px-3 py-1 break-all">
+                      {videoStatus?.driver ? `${videoStatus.driver}${videoStatus.family ? ` · ${videoStatus.family}` : ''}` : 'not set'}
+                    </span>
+                  </div>
+                  <div className="px-4 py-3 text-xs text-text-muted font-mono break-all space-y-1">
+                    <div>
+                      POST → <span className="text-text-secondary">{videoStatus?.endpoint || 'http://127.0.0.1:8082/v1/videos'}</span>
+                    </div>
+                    <div>
+                      Content → <span className="text-text-secondary">{videoStatus?.content_endpoint || 'http://127.0.0.1:8082/v1/videos/{id}/content'}</span>
+                    </div>
+                    <div>
+                      API key → <span className="text-text-secondary">{videoStatus?.api_key || 'key-router'}</span>
+                      <span className="font-sans"> · auth {videoStatus?.auth_required ? 'required' : 'off'}</span>
+                    </div>
+                    <div className="font-sans">
+                      Gateway →{' '}
+                      <span className={videoStatus?.gateway_configured ? 'text-success' : 'text-danger'}>
+                        {videoStatus?.gateway_configured ? (videoStatus?.gateway_url || 'configured') : 'MODAL_VIDEO_GATEWAY_URL not set'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl bg-surface-850 border border-border p-5 mt-6">
+                  <h3 className="text-xs font-semibold tracking-widest uppercase text-text-secondary mb-4">Video profile for AdCraft</h3>
+                  <div className="grid grid-cols-1 lg:grid-cols-[1.7fr_auto] gap-4 items-end">
+                    <div>
+                      <label className="block text-[11px] font-medium tracking-widest uppercase text-text-secondary mb-1.5">Profile</label>
+                      <select value={videoProfile} onChange={e => setVideoProfile(e.target.value)} className="w-full h-9 rounded-lg bg-surface-900 border border-border px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand">
+                        <option value="">— keep current —</option>
+                        {videoProfiles.map(p => (
+                          <option key={p.id} value={p.id}>{p.id}{p.current ? ' · current' : ''} · {p.driver}{p.family ? ` · ${p.family}` : ''}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <button onClick={saveVideoProfile} disabled={!videoProfile || videoSaving} className="h-9 rounded-full bg-brand text-white hover:bg-brand-muted disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium px-6 transition-colors">{videoSaving ? 'Saving…' : 'Save'}</button>
+                  </div>
+                </div>
+
+                <div className="rounded-xl bg-surface-850 border border-border p-5 mt-6">
+                  <div className="flex flex-wrap items-center justify-between gap-4 mb-3">
+                    <h3 className="text-xs font-semibold tracking-widest uppercase text-text-secondary">Connection test</h3>
+                    <div className="flex gap-2">
+                      <button onClick={() => testVideo(false)} disabled={videoTesting || !videoStatus?.configured} className="rounded-full border border-border bg-surface-900 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed text-text-secondary text-xs font-medium px-4 py-1.5 transition-colors">{videoTesting ? 'Testing…' : 'Run test'}</button>
+                      <button onClick={() => testVideo(true)} disabled={videoTesting || !videoStatus?.configured} className="rounded-full border border-border bg-surface-900 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed text-text-secondary text-xs font-medium px-4 py-1.5 transition-colors">Test with image</button>
+                    </div>
+                  </div>
+                  <p className="text-xs text-text-muted leading-relaxed mb-3">
+                    Submits a real 5s / 480p job and polls until it finishes. <span className="text-text-secondary">Test with image</span> sends a 256×256 reference frame, exercising image-to-video (AdCraft's keyframe/reference path).
+                  </p>
+
+                  {videoTestResult && (
+                    <div className={`rounded-lg border p-3 text-xs space-y-2 ${videoTestResult.status === 'error' ? 'border-danger/20 bg-danger/10' : 'border-border bg-surface-900'}`}>
+                      {videoTestResult.status === 'error' ? (
+                        <div className="text-danger break-words">
+                          <span className="font-mono">{videoTestResult.error?.code || 'error'}</span>
+                          {videoTestResult.http_status ? <span className="text-text-muted"> · HTTP {videoTestResult.http_status}</span> : null}
+                          <div className="mt-1 text-danger/90">{videoTestResult.error?.message || 'Test failed'}</div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-text-secondary">
+                            <span className="font-mono">{videoTestResult.job?.id}</span>
+                            <span className={`font-semibold ${videoTestResult.job?.status === 'completed' ? 'text-success' : 'text-accent'}`}>{videoTestResult.job?.status}</span>
+                            <span className="text-text-muted">progress {Math.round((videoTestResult.job?.progress || 0) * 100)}%</span>
+                            {videoTestResult.with_reference ? <span className="text-accent">image reference</span> : null}
+                            {videoTestResult.job?.usage?.gpu ? <span className="text-text-muted">gpu <span className="font-mono">{String(videoTestResult.job.usage.gpu)}</span></span> : null}
+                          </div>
+                          {videoTestResult.job?.error ? (
+                            <div className="text-danger break-words">{videoTestResult.job.error.code}: {videoTestResult.job.error.message}</div>
+                          ) : null}
+                          {videoTestResult.job?.status === 'completed' ? (
+                            <video src={`/api/adcraft-video/jobs/${videoTestResult.job.id}/content`} controls className="rounded-lg border border-border max-w-full max-h-[360px] bg-black" />
+                          ) : (
+                            <div className="text-text-muted">Job is <span className="font-mono">{videoTestResult.job?.status || 'unknown'}</span> — polling automatically…</div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {videoJobs.length > 0 && (
+                  <div className="rounded-xl bg-surface-850 border border-border p-5 mt-6">
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <h3 className="text-xs font-semibold tracking-widest uppercase text-text-secondary">Recent jobs</h3>
+                      <button onClick={fetchVideo} className="rounded-full border border-border bg-surface-900 hover:bg-surface-800 text-text-secondary text-xs font-medium px-3 py-1 transition-colors">Refresh</button>
+                    </div>
+                    <div className="rounded-lg border border-border overflow-hidden divide-y divide-border">
+                      {videoJobs.map(job => (
+                        <div key={job.id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-xs">
+                          <span className="font-mono text-text-secondary">{job.id}</span>
+                          <span className={`font-medium ${job.status === 'completed' ? 'text-success' : job.status === 'failed' ? 'text-danger' : 'text-accent'}`}>{job.status}</span>
+                          <span className="text-text-muted">{Math.round((job.progress || 0) * 100)}%</span>
+                          {job.output?.resolution ? <span className="text-text-muted font-mono">{job.output.resolution}</span> : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ADCRAFT SFX */}
+          {activeTab === 'adcraft' && adcraftSection === 'sfx' && (
+            <div className="space-y-6">
+              <div className="border border-border bg-surface-900 p-6 rounded-2xl">
+                <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
+                  <div>
+                    <h2 className="text-[13px] font-semibold tracking-widest uppercase text-text-secondary">AdCraft SFX</h2>
+                    <p className="text-sm text-text-secondary mt-1.5 max-w-2xl leading-relaxed">
+                      Video-to-SFX (ambience / foley, <span className="text-text-secondary">no speech, no music</span>). AdCraft sends <code className="font-mono text-xs bg-surface-850 border border-border px-1.5 py-0.5 rounded">video_url</code>; the proxy fetches it locally and forwards the bytes to Modal.
+                    </p>
+                  </div>
+                  <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${audioStatus?.configured ? 'border-success/30 bg-success/10 text-success' : 'border-border bg-surface-850 text-text-muted'}`}>
+                    <span className={`w-2 h-2 rounded-full ${audioStatus?.configured ? 'bg-success animate-pulse' : 'bg-text-muted'}`} />
+                    {audioStatus?.configured ? 'Configured' : 'Not configured'}
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-border overflow-hidden divide-y divide-border bg-surface-850">
+                  <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+                    <span className="inline-flex items-center rounded-full bg-accent-bg border border-accent-border text-accent text-xs font-medium px-3 py-1 font-mono">ADCRAFT-AUDIO</span>
+                    <span className="text-text-muted">→</span>
+                    <span className="inline-flex items-center rounded-full bg-brand-bg border border-brand-border text-brand text-xs font-mono px-3 py-1 break-all">
+                      {audioStatus?.driver ? `${audioStatus.driver}${audioStatus.family ? ` · ${audioStatus.family}` : ''}` : 'not set'}
+                    </span>
+                  </div>
+                  <div className="px-4 py-3 text-xs text-text-muted font-mono break-all space-y-1">
+                    <div>POST → <span className="text-text-secondary">{audioStatus?.endpoint || 'http://127.0.0.1:8082/v1/audio/video-to-sfx'}</span></div>
+                    <div>API key → <span className="text-text-secondary">{audioStatus?.api_key || 'key-router'}</span><span className="font-sans"> · auth {audioStatus?.auth_required ? 'required' : 'off'}</span></div>
+                    <div className="font-sans">Gateway → <span className={audioStatus?.gateway_configured ? 'text-success' : 'text-danger'}>{audioStatus?.gateway_configured ? (audioStatus?.gateway_url || 'configured') : 'MODAL_AUDIO_GATEWAY_URL not set'}</span></div>
+                    <div className="font-sans">Video allowlist → <span className="font-mono text-text-secondary">{audioStatus?.video_allow_hosts || '—'}</span></div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl bg-surface-850 border border-border p-5 mt-6">
+                  <div className="flex flex-wrap items-center justify-between gap-4 mb-3">
+                    <h3 className="text-xs font-semibold tracking-widest uppercase text-text-secondary">Connection test</h3>
+                    <button onClick={testAudio} disabled={audioTesting || !audioStatus?.configured} className="rounded-full border border-border bg-surface-900 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed text-text-secondary text-xs font-medium px-4 py-1.5 transition-colors">{audioTesting ? 'Testing…' : 'Test SFX (latest video)'}</button>
+                  </div>
+                  <p className="text-xs text-text-muted leading-relaxed mb-3">
+                    Uses the newest completed video job (or a 2s generated clip) and runs it through the SFX pipeline. Polls automatically and shows a player when the WAV is ready.
+                  </p>
+
+                  {audioTestResult && (
+                    <div className={`rounded-lg border p-3 text-xs space-y-2 ${audioTestResult.status === 'error' ? 'border-danger/20 bg-danger/10' : 'border-border bg-surface-900'}`}>
+                      {audioTestResult.status === 'error' ? (
+                        <div className="text-danger break-words">
+                          <span className="font-mono">{audioTestResult.error?.code || 'error'}</span>
+                          {audioTestResult.http_status ? <span className="text-text-muted"> · HTTP {audioTestResult.http_status}</span> : null}
+                          <div className="mt-1 text-danger/90">{audioTestResult.error?.message || 'Test failed'}</div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-text-secondary">
+                            <span className="font-mono">{audioTestResult.job?.id}</span>
+                            <span className={`font-semibold ${audioTestResult.job?.status === 'succeeded' ? 'text-success' : 'text-accent'}`}>{audioTestResult.job?.status}</span>
+                            {audioTestResult.video_source ? <span className="text-text-muted font-mono">{audioTestResult.video_source}</span> : null}
+                          </div>
+                          {audioTestResult.job?.error ? (
+                            <div className="text-danger break-words">{audioTestResult.job.error.code}: {audioTestResult.job.error.message}</div>
+                          ) : null}
+                          {audioTestResult.job?.status === 'succeeded' ? (
+                            <div className="space-y-2">
+                              <audio src={`/api/adcraft-audio/jobs/${audioTestResult.job.id}/content`} controls className="w-full" />
+                              <div className="text-text-muted">
+                                {audioTestResult.job.output?.duration_seconds?.toFixed(2)}s · {audioTestResult.job.output?.sample_rate} Hz · {audioTestResult.job.output?.channels} ch · {Math.round((audioTestResult.job.output?.size_bytes || 0) / 1024)} KB
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-text-muted">Job is <span className="font-mono">{audioTestResult.job?.status || 'unknown'}</span> — polling automatically…</div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {audioJobs.length > 0 && (
+                  <div className="rounded-xl bg-surface-850 border border-border p-5 mt-6">
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <h3 className="text-xs font-semibold tracking-widest uppercase text-text-secondary">Recent audio jobs</h3>
+                      <button onClick={fetchAudio} className="rounded-full border border-border bg-surface-900 hover:bg-surface-800 text-text-secondary text-xs font-medium px-3 py-1 transition-colors">Refresh</button>
+                    </div>
+                    <div className="rounded-lg border border-border overflow-hidden divide-y divide-border">
+                      {audioJobs.map(job => (
+                        <div key={job.id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-xs">
+                          <span className="font-mono text-text-secondary">{job.id}</span>
+                          <span className={`font-medium ${job.status === 'succeeded' ? 'text-success' : job.status === 'failed' ? 'text-danger' : 'text-accent'}`}>{job.status}</span>
+                          {job.output?.duration_seconds ? <span className="text-text-muted font-mono">{job.output.duration_seconds.toFixed(2)}s</span> : null}
+                          {job.output?.sample_rate ? <span className="text-text-muted font-mono">{job.output.sample_rate} Hz</span> : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

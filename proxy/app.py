@@ -18,14 +18,26 @@ def create_app() -> FastAPI:
     from proxy.routers.anthropic import router as anthropic_router
     from proxy.routers.openai import router as openai_router
     from proxy.routers.responses import router as responses_router
+    from proxy.routers.images import router as images_router
+    from proxy.routers.videos import router as videos_router, video_api_error_handler
+    from proxy.routers.audio import router as audio_router, audio_api_error_handler
     from proxy.routers.management import router as management_router
     from proxy.routers.agents import router as agents_router
+    from video.errors import VideoApiError
+    from audio.errors import AudioApiError
 
     app.include_router(anthropic_router)
     app.include_router(openai_router)
     app.include_router(responses_router)
+    app.include_router(images_router)
+    app.include_router(videos_router)
+    app.include_router(audio_router)
     app.include_router(management_router)
     app.include_router(agents_router)
+
+    # Isolated video/audio subsystem error shape ({"error": {"code", "message"}}).
+    app.add_exception_handler(VideoApiError, video_api_error_handler)
+    app.add_exception_handler(AudioApiError, audio_api_error_handler)
 
     @app.api_route("/v1/{path_name:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"], operation_id="catch_all_v1")
     async def catch_all_v1(path_name: str, request: Request):

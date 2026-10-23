@@ -1,0 +1,18 @@
+[
+  { "id": "char-01", "kind": "character", "prompt": "Cinematic slow push-in on a confident young barista with curly hair, warm morning light in a cafe, shallow depth of field, film grain." },
+  { "id": "char-02", "kind": "character", "prompt": "A middle-aged fisherman with a weathered face laughing on a wooden boat at golden hour, breeze moving his jacket." },
+  { "id": "char-03", "kind": "character", "prompt": "A teenage skateboarder with red headphones, circling the camera slowly in an urban plaza, overcast daylight." },
+  { "id": "char-04", "kind": "character", "prompt": "Elegant woman in a silk blouse walking through a glass lobby, camera tracks alongside, soft reflections." },
+  { "id": "scene-01", "kind": "scene", "prompt": "Aerial drone shot descending over a coastal town at sunrise, gentle parallax, warm haze." },
+  { "id": "scene-02", "kind": "scene", "prompt": "Rain on a neon-lit city street at night, camera drifts forward through puddles, reflections shimmer." },
+  { "id": "scene-03", "kind": "scene", "prompt": "Sunlit wheat field with wind rippling the stalks, slow dolly right, clear blue sky." },
+  { "id": "scene-04", "kind": "scene", "prompt": "Cozy interior of a bookstore, dust motes in a beam of afternoon light, slow tilt down the shelves." },
+  { "id": "story-01", "kind": "storyboard", "prompt": "Shot 1 of an ad: alarm clock rings, hand slaps it, warm morning light through curtains." },
+  { "id": "story-02", "kind": "storyboard", "prompt": "Shot 2 of an ad: product placed on a marble counter, soft rim light, steam rising from a mug." },
+  { "id": "story-03", "kind": "storyboard", "prompt": "Shot 3 of an ad: logo reveal on a dark background with a slow light sweep across the mark." },
+  { "id": "story-04", "kind": "storyboard", "prompt": "Shot 4 of an ad: happy customer smiling at the phone screen, kitchen background softly blurred." },
+  { "id": "segment-01", "kind": "video_segment", "prompt": "A package sliding across a conveyor belt, camera tracking level with it, industrial lighting." },
+  { "id": "segment-02", "kind": "video_segment", "prompt": "Coffee beans pouring in slow motion into a grinder, macro lens, dramatic side light." },
+  { "id": "segment-03", "kind": "video_segment", "prompt": "A sneaker rotating on a turntable against a gradient backdrop, studio softbox lighting." },
+  { "id": "segment-04", "kind": "video_segment", "prompt": "A robot arm assembling a phone on a clean production line, precise movements, cool cinematic grade." }
+]

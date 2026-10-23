@@ -143,6 +143,12 @@ def openai_chat_to_anthropic(req: OpenAIRequest) -> AnthropicRequest:
     if effort:
         anthropic_req.reasoning_effort = effort
 
+    # Carry structured-output hints (AdCraft and other OpenAI clients) through to
+    # OpenAI-native providers; AnthropicRequest stores them as an extra field.
+    response_format = getattr(req, "response_format", None)
+    if response_format:
+        anthropic_req.response_format = response_format
+
     return anthropic_req
 
 

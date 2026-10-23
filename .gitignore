@@ -73,3 +73,8 @@ htmlcov/
 # Backup (optional local)
 # ========================
 backup/
+
+# ========================
+# Runtime data (video job store + outputs)
+# ========================
+data/

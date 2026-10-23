@@ -52,6 +52,11 @@ class ModelMapper:
         (r"\b(gpt|codex|o[134])\b", "codex"),
     ]
 
+    # Aliases that must resolve by EXACT key only — never via keyword or family
+    # fallback. AdCraft sends the literal string "adcraft"; it must map to the
+    # 'adcraft' key (or raise), and must never be caught by the gpt/codex regex.
+    EXACT_ONLY_KEYS = {"adcraft", "adcraft-image"}
+
     def resolve(self, requested_model: str) -> Tuple[str, str]:
         """
         Resolves the requested model string to a provider and target model.
@@ -62,12 +67,13 @@ class ModelMapper:
           3. Family fallback: OpenAI-family models (gpt-*/codex/o3/o4) route
              through the single 'codex' mapping key.
           4. Raise ValueError with a helpful message.
+        Exact-only aliases (see EXACT_ONLY_KEYS, e.g. 'adcraft') skip steps 2-3.
         """
         # 1. Exact match
         target = self.mappings.get(requested_model)
 
         # 2. Keyword fallback — scan existing keys for matching keyword
-        if not target:
+        if not target and requested_model not in self.EXACT_ONLY_KEYS:
             model_lower = requested_model.lower()
             for keyword in self.KEYWORD_TIERS:
                 if keyword in model_lower:
@@ -82,7 +88,7 @@ class ModelMapper:
                     break
 
         # 3. Family fallback — one key covers an entire model family
-        if not target:
+        if not target and requested_model not in self.EXACT_ONLY_KEYS:
             model_lower = requested_model.lower()
             for pattern, fallback_key in self.FAMILY_FALLBACKS:
                 if re.search(pattern, model_lower) and fallback_key in self.mappings:
