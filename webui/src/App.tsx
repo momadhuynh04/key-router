@@ -16,41 +16,6 @@ function GitHubIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
   )
 }
 
-function LogoMark({ className = '' }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 120 120" className={className} role="img" aria-label="key-router">
-      <defs>
-        <linearGradient id="kr-logo-stroke" x1="14" y1="10" x2="108" y2="110" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#c4b5fd" />
-          <stop offset="0.45" stopColor="#8b5cf6" />
-          <stop offset="1" stopColor="#4f46e5" />
-        </linearGradient>
-        <radialGradient id="kr-logo-glow" cx="0.5" cy="0.18" r="0.9">
-          <stop stopColor="#7c5cff" stopOpacity="0.35" />
-          <stop offset="1" stopColor="#7c5cff" stopOpacity="0" />
-        </radialGradient>
-      </defs>
-
-      <rect x="4" y="4" width="112" height="112" rx="30" fill="#0b0d13" stroke="url(#kr-logo-stroke)" strokeWidth="2" />
-      <rect x="10" y="10" width="100" height="100" rx="24" fill="url(#kr-logo-glow)" />
-
-      {/* key head + shaft */}
-      <circle cx="38" cy="60" r="13" fill="none" stroke="url(#kr-logo-stroke)" strokeWidth="5" />
-      <circle cx="38" cy="60" r="4" fill="url(#kr-logo-stroke)" />
-      <path d="M51 60h18" stroke="url(#kr-logo-stroke)" strokeWidth="5" strokeLinecap="round" />
-
-      {/* one route in, three routes out */}
-      <path d="M69 60C78 60 80 44 93 44" fill="none" stroke="url(#kr-logo-stroke)" strokeWidth="5" strokeLinecap="round" />
-      <path d="M69 60h24" stroke="url(#kr-logo-stroke)" strokeWidth="5" strokeLinecap="round" />
-      <path d="M69 60C78 60 80 76 93 76" fill="none" stroke="url(#kr-logo-stroke)" strokeWidth="5" strokeLinecap="round" />
-
-      <circle cx="95" cy="44" r="4.5" fill="#c4b5fd" />
-      <circle cx="95" cy="60" r="4.5" fill="#c4b5fd" />
-      <circle cx="95" cy="76" r="4.5" fill="#c4b5fd" />
-    </svg>
-  )
-}
-
 function SearchableDropdown({ options, value, onChange, placeholder }: { options: string[], value: string, onChange: (val: string) => void, placeholder: string }) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -331,31 +296,36 @@ function App() {
                   backgroundSize: '26px 26px',
                 }}
               />
-              <div aria-hidden="true" className="pointer-events-none absolute -left-40 top-1/2 h-[520px] w-[520px] -translate-y-1/2 rounded-full bg-[#7c5cff]/10 blur-3xl" />
-              <div aria-hidden="true" className="pointer-events-none absolute -right-32 top-1/3 h-[480px] w-[480px] rounded-full bg-brand/10 blur-3xl" />
-
-              <div className="relative flex w-full flex-col items-center gap-12 lg:flex-row lg:items-center lg:justify-between lg:gap-16">
-                <div className="flex flex-col items-center gap-7 text-center sm:flex-row sm:items-center sm:text-left">
-                  <LogoMark className="h-36 w-36 shrink-0 drop-shadow-[0_18px_50px_rgba(124,92,255,0.28)] sm:h-48 sm:w-48 xl:h-56 xl:w-56" />
-                  <div>
-                    <h2 className="text-5xl font-semibold tracking-tight text-text-primary sm:text-6xl">key-router</h2>
-                    <p className="mt-2 text-base text-text-muted sm:text-xl">Universal proxy for Claude Code &amp; Codex</p>
-                    <div className="mt-5 flex flex-wrap items-center justify-center gap-2 text-xs text-text-muted sm:justify-start">
-                      <a
-                        href="https://github.com/momadhuynh04/key-router"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-900/70 px-4 py-2 font-mono transition-colors hover:text-text-secondary"
-                      >
-                        <GitHubIcon className="h-4 w-4" />
-                        momadhuynh04/key-router
-                      </a>
-                      <span className="rounded-full border border-border bg-surface-900/70 px-4 py-2 font-mono">v{APP_VERSION}</span>
-                    </div>
+              <div className="relative flex w-full flex-col items-center gap-12 xl:flex-row xl:items-center xl:justify-center xl:gap-12 min-[1440px]:gap-16">
+                <div className="flex flex-col items-center text-center xl:items-start xl:text-left">
+                  <a
+                    href="https://github.com/momadhuynh04/key-router"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open the key-router repository on GitHub"
+                    className="group inline-flex items-start gap-2 whitespace-nowrap font-tech text-6xl font-bold tracking-tighter text-text-primary transition-colors hover:text-brand sm:text-7xl xl:text-7xl min-[1440px]:text-8xl min-[1700px]:text-9xl"
+                  >
+                    key-router
+                    <span aria-hidden="true" className="mt-1 text-xl text-text-muted transition-colors group-hover:text-brand sm:mt-2 sm:text-2xl">↗</span>
+                  </a>
+                  <p className="mt-3 font-tech text-[11px] uppercase tracking-[0.32em] text-text-muted sm:text-xs">
+                    Universal proxy · Claude Code + Codex
+                  </p>
+                  <div className="mt-6 flex flex-wrap items-center justify-center gap-2 text-xs text-text-muted xl:justify-start">
+                    <a
+                      href="https://github.com/momadhuynh04/key-router"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-900/70 px-4 py-2 font-tech transition-colors hover:text-text-secondary"
+                    >
+                      <GitHubIcon className="h-4 w-4" />
+                      momadhuynh04/key-router
+                    </a>
+                    <span className="rounded-full border border-border bg-surface-900/70 px-4 py-2 font-tech">v{APP_VERSION}</span>
                   </div>
                 </div>
 
-                <div className="grid w-full max-w-xl grid-cols-2 gap-3 lg:w-[540px] lg:max-w-none lg:shrink-0">
+                <div className="grid w-full max-w-xl grid-cols-2 gap-3 xl:w-[500px] xl:max-w-none xl:shrink-0">
                   {[
                     ['Model routing', 'Claude · Codex → any provider'],
                     ['Agent bridge', 'Run Claude Code from chat'],
@@ -363,7 +333,7 @@ function App() {
                     ['Custom providers', 'Bring your own OpenAI API'],
                   ].map(([title, desc]) => (
                     <div key={title} className="rounded-2xl border border-border/70 bg-surface-900/40 px-4 py-4">
-                      <p className="text-sm font-medium text-text-secondary">{title}</p>
+                      <p className="font-tech text-xs font-medium uppercase tracking-wider text-text-secondary">{title}</p>
                       <p className="mt-1 text-xs leading-relaxed text-text-muted">{desc}</p>
                     </div>
                   ))}
