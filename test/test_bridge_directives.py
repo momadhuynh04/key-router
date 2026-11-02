@@ -51,6 +51,23 @@ def test_stop_directive():
     assert p.agent_id == "opus-probrowser"
 
 
+def test_call_directive():
+    p = directives.parse("/call opus-probrowser xem lại giúp tao")
+    assert p.kind == "call"
+    assert p.agent_id == "opus-probrowser"
+    assert p.text == "xem lại giúp tao"
+
+    assert directives.parse("/sub a1 x").kind == "call"
+    assert directives.parse("/run a1 x").kind == "call"
+
+
+def test_bare_call_has_no_agent():
+    p = directives.parse("/call")
+    assert p.kind == "call"
+    assert p.agent_id is None
+    assert p.text == ""
+
+
 def test_directive_is_case_insensitive_and_trims():
     p = directives.parse("  /START opus-probrowser  ")
     assert p.kind == "start"

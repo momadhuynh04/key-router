@@ -31,6 +31,10 @@ TOOL_VALUES = ("readonly", "edit", "full")
 MODEL_ID = "key-router-agents"
 
 
+class AgentConfigError(ValueError):
+    """An agent or bridge setting is invalid. Kept as ValueError for callers/tests."""
+
+
 class AgentSpec(BaseModel):
     id: str
     name: str = ""
@@ -75,7 +79,7 @@ def ensure_config() -> BridgeConfig:
     try:
         raw = json.loads(AGENTS_PATH.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
-        raise ValueError(f"agents.json is not valid JSON: {e}") from e
+        raise AgentConfigError(f"agents.json is not valid JSON: {e}") from e
     cfg = BridgeConfig(**raw)
     if not cfg.token:
         cfg.token = new_token()
@@ -105,43 +109,47 @@ def resolve_workdir(agent: AgentSpec, cfg: BridgeConfig) -> Path:
     """
     path = Path(agent.workdir).expanduser()
     if not path.is_absolute():
-        raise ValueError(f"workdir must be an absolute path: {agent.workdir!r}")
+        raise AgentConfigError(f"workdir must be an absolute path: {agent.workdir!r}")
     resolved = path.resolve()
     roots = [Path(r).expanduser().resolve() for r in cfg.allowed_roots]
     if not roots:
-        raise ValueError(
+        raise AgentConfigError(
             "allowed_roots is empty — add at least one root folder in the Agents tab."
         )
     if not any(resolved == r or resolved.is_relative_to(r) for r in roots):
-        raise ValueError(f"workdir {resolved} is outside allowed_roots")
+        raise AgentConfigError(f"workdir {resolved} is outside allowed_roots")
     return resolved
 
 
 def validate_agent(agent: AgentSpec, cfg: BridgeConfig) -> None:
     if not AGENT_ID_RE.match(agent.id or ""):
-        raise ValueError(
+        raise AgentConfigError(
             f"invalid id {agent.id!r} — use a-z, 0-9, '-', '_' (2-32 characters)"
         )
     if agent.cli not in CLI_VALUES:
-        raise ValueError(f"invalid cli {agent.cli!r} — pick one of {', '.join(CLI_VALUES)}")
+        raise AgentConfigError(f"invalid cli {agent.cli!r} — pick one of {', '.join(CLI_VALUES)}")
     if agent.permission not in PERMISSION_VALUES:
-        raise ValueError(
+        raise AgentConfigError(
             f"invalid permission {agent.permission!r} — pick one of {', '.join(PERMISSION_VALUES)}"
         )
     if agent.effort not in EFFORT_VALUES:
-        raise ValueError(
+        raise AgentConfigError(
             f"invalid effort {agent.effort!r} — pick one of {', '.join(EFFORT_VALUES)}"
         )
     if agent.tools not in TOOL_VALUES:
-        raise ValueError(
+        raise AgentConfigError(
             f"invalid tools profile {agent.tools!r} — pick one of {', '.join(TOOL_VALUES)}"
         )
     if agent.permission == "bypass" and not cfg.allow_bypass:
-        raise ValueError(
+        raise AgentConfigError(
             "permission 'bypass' is refused — enable allow_bypass in Bridge settings first"
         )
+    if agent.restricted and agent.permission == "bypass":
+        raise AgentConfigError(
+            "restricted mode refuses permission 'bypass' — pick one"
+        )
     if agent.max_budget_usd is not None and agent.max_budget_usd <= 0:
-        raise ValueError("max_budget_usd must be greater than 0")
+        raise AgentConfigError("max_budget_usd must be greater than 0")
     resolve_workdir(agent, cfg)
 
 
@@ -149,12 +157,12 @@ def validate_config(cfg: BridgeConfig) -> None:
     ids = [a.id for a in cfg.agents]
     duplicates = {i for i in ids if ids.count(i) > 1}
     if duplicates:
-        raise ValueError(f"duplicate agent ids: {', '.join(sorted(duplicates))}")
+        raise AgentConfigError(f"duplicate agent ids: {', '.join(sorted(duplicates))}")
     for agent in cfg.agents:
         validate_agent(agent, cfg)
     if cfg.default_agent and cfg.default_agent not in ids:
-        raise ValueError(f"default_agent {cfg.default_agent!r} does not exist")
+        raise AgentConfigError(f"default_agent {cfg.default_agent!r} does not exist")
     if cfg.max_concurrent_runs < 1:
-        raise ValueError("max_concurrent_runs must be >= 1")
+        raise AgentConfigError("max_concurrent_runs must be >= 1")
     if cfg.turn_timeout_sec < 1:
-        raise ValueError("turn_timeout_sec must be >= 1")
+        raise AgentConfigError("turn_timeout_sec must be >= 1")

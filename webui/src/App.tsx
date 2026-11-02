@@ -6,6 +6,50 @@ import SkillsPanel from './SkillsPanel'
 import type { Agent } from './AgentModal'
 
 const FAMILY_KEYS = ['claude', 'codex']
+const APP_VERSION = '0.1.32'
+
+function GitHubIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
+  return (
+    <svg className={className} fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
+    </svg>
+  )
+}
+
+function LogoMark({ className = '' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 120 120" className={className} role="img" aria-label="key-router">
+      <defs>
+        <linearGradient id="kr-logo-stroke" x1="14" y1="10" x2="108" y2="110" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#c4b5fd" />
+          <stop offset="0.45" stopColor="#8b5cf6" />
+          <stop offset="1" stopColor="#4f46e5" />
+        </linearGradient>
+        <radialGradient id="kr-logo-glow" cx="0.5" cy="0.18" r="0.9">
+          <stop stopColor="#7c5cff" stopOpacity="0.35" />
+          <stop offset="1" stopColor="#7c5cff" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+
+      <rect x="4" y="4" width="112" height="112" rx="30" fill="#0b0d13" stroke="url(#kr-logo-stroke)" strokeWidth="2" />
+      <rect x="10" y="10" width="100" height="100" rx="24" fill="url(#kr-logo-glow)" />
+
+      {/* key head + shaft */}
+      <circle cx="38" cy="60" r="13" fill="none" stroke="url(#kr-logo-stroke)" strokeWidth="5" />
+      <circle cx="38" cy="60" r="4" fill="url(#kr-logo-stroke)" />
+      <path d="M51 60h18" stroke="url(#kr-logo-stroke)" strokeWidth="5" strokeLinecap="round" />
+
+      {/* one route in, three routes out */}
+      <path d="M69 60C78 60 80 44 93 44" fill="none" stroke="url(#kr-logo-stroke)" strokeWidth="5" strokeLinecap="round" />
+      <path d="M69 60h24" stroke="url(#kr-logo-stroke)" strokeWidth="5" strokeLinecap="round" />
+      <path d="M69 60C78 60 80 76 93 76" fill="none" stroke="url(#kr-logo-stroke)" strokeWidth="5" strokeLinecap="round" />
+
+      <circle cx="95" cy="44" r="4.5" fill="#c4b5fd" />
+      <circle cx="95" cy="60" r="4.5" fill="#c4b5fd" />
+      <circle cx="95" cy="76" r="4.5" fill="#c4b5fd" />
+    </svg>
+  )
+}
 
 function SearchableDropdown({ options, value, onChange, placeholder }: { options: string[], value: string, onChange: (val: string) => void, placeholder: string }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -216,6 +260,7 @@ function App() {
       <div className="flex-1 flex flex-col min-w-0">
         <main className="flex-1 px-6 py-8">
           {activeTab === 'routing' && (
+            <div className="flex min-h-[calc(100vh-4rem)] flex-col gap-8">
             <div className="border border-border bg-surface-900 p-6 rounded-2xl">
               <div className="flex items-center justify-between gap-4 mb-5">
                 <h2 className="text-[13px] font-semibold tracking-widest uppercase text-text-secondary">Active model routes</h2>
@@ -275,6 +320,56 @@ function App() {
                     : 'Explicit override — applies to this source key only; the family route still covers everything else.'}
                 </p>
               </div>
+            </div>
+
+            <div className="relative flex min-h-[460px] flex-1 items-center overflow-hidden py-12">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 opacity-30"
+                style={{
+                  backgroundImage: 'radial-gradient(circle, rgba(148,163,184,0.18) 1px, transparent 1px)',
+                  backgroundSize: '26px 26px',
+                }}
+              />
+              <div aria-hidden="true" className="pointer-events-none absolute -left-40 top-1/2 h-[520px] w-[520px] -translate-y-1/2 rounded-full bg-[#7c5cff]/10 blur-3xl" />
+              <div aria-hidden="true" className="pointer-events-none absolute -right-32 top-1/3 h-[480px] w-[480px] rounded-full bg-brand/10 blur-3xl" />
+
+              <div className="relative flex w-full flex-col items-center gap-12 lg:flex-row lg:items-center lg:justify-between lg:gap-16">
+                <div className="flex flex-col items-center gap-7 text-center sm:flex-row sm:items-center sm:text-left">
+                  <LogoMark className="h-36 w-36 shrink-0 drop-shadow-[0_18px_50px_rgba(124,92,255,0.28)] sm:h-48 sm:w-48 xl:h-56 xl:w-56" />
+                  <div>
+                    <h2 className="text-5xl font-semibold tracking-tight text-text-primary sm:text-6xl">key-router</h2>
+                    <p className="mt-2 text-base text-text-muted sm:text-xl">Universal proxy for Claude Code &amp; Codex</p>
+                    <div className="mt-5 flex flex-wrap items-center justify-center gap-2 text-xs text-text-muted sm:justify-start">
+                      <a
+                        href="https://github.com/momadhuynh04/key-router"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-900/70 px-4 py-2 font-mono transition-colors hover:text-text-secondary"
+                      >
+                        <GitHubIcon className="h-4 w-4" />
+                        momadhuynh04/key-router
+                      </a>
+                      <span className="rounded-full border border-border bg-surface-900/70 px-4 py-2 font-mono">v{APP_VERSION}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid w-full max-w-xl grid-cols-2 gap-3 lg:w-[540px] lg:max-w-none lg:shrink-0">
+                  {[
+                    ['Model routing', 'Claude · Codex → any provider'],
+                    ['Agent bridge', 'Run Claude Code from chat'],
+                    ['Skills manager', 'Install and toggle skills'],
+                    ['Custom providers', 'Bring your own OpenAI API'],
+                  ].map(([title, desc]) => (
+                    <div key={title} className="rounded-2xl border border-border/70 bg-surface-900/40 px-4 py-4">
+                      <p className="text-sm font-medium text-text-secondary">{title}</p>
+                      <p className="mt-1 text-xs leading-relaxed text-text-muted">{desc}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
             </div>
           )}
 
@@ -369,7 +464,8 @@ function App() {
                         )}
                         <span className="text-xs text-text-secondary font-medium">{a.cli}</span>
                         <span className="text-xs text-text-muted">{a.model || '(default)'}</span>
-                        <span className="text-xs text-text-muted px-2 py-0.5 rounded-full border border-border">{a.permission}</span>
+                        <span className="text-xs text-text-muted px-2 py-0.5 rounded-full border border-border" title="Permission mode">{a.permission}</span>
+                        <span className="text-xs text-text-muted px-2 py-0.5 rounded-full border border-border" title="Tool profile">{a.tools}</span>
                         <span className="text-xs text-text-muted">{a.effort}</span>
                         <span className="text-xs text-text-muted font-mono truncate max-w-[220px]" title={a.workdir}>{a.workdir}</span>
                         <div className="ml-auto flex gap-3">
@@ -380,6 +476,28 @@ function App() {
                     ))}
                   </div>
                 )}
+
+                <div className="mt-5 rounded-xl border border-border bg-surface-850 p-4">
+                  <p className="text-[11px] font-medium tracking-widest uppercase text-text-muted mb-1">Permission cheat sheet</p>
+                  <p className="text-xs text-text-muted mb-3 leading-relaxed">
+                    Headless runs never prompt: anything that would ask is denied instead, and the chat shows a red
+                    <span className="text-danger"> Blocked by permissions</span> line. Tools decide which tools exist; permission decides which ones may run.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
+                    {[
+                      { mode: 'plan', text: 'Read-only. No edits, no shell.' },
+                      { mode: 'edit', text: 'Edits files in the workdir. Shell commands such as rg, find, and git are denied.' },
+                      { mode: 'auto', text: 'A classifier approves ordinary actions, including safe shell commands.' },
+                      { mode: 'ci', text: 'Only pre-approved tools. Add patterns like Bash(rg:*) to allow shell.' },
+                      { mode: 'bypass', text: 'No checks at all. Requires allow_bypass in Bridge settings.' },
+                    ].map(p => (
+                      <div key={p.mode} className="rounded-lg border border-border bg-surface-900 px-3 py-2">
+                        <code className="text-xs font-mono text-brand">{p.mode}</code>
+                        <p className="text-xs text-text-muted mt-1 leading-relaxed">{p.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               <BridgePanel

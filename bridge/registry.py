@@ -4,10 +4,15 @@ All knowledge about CLI flags lives here so it is not scattered around the bridg
 """
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from bridge.config import AgentSpec, BridgeConfig, resolve_workdir
+
+MCP_ASK_SCRIPT = Path(__file__).resolve().parent / "mcp_ask.py"
+ASK_TOOL_RULE = "mcp__bridge-ask__ask_user"
 
 # Claude Code: permission mode -> flag
 CLAUDE_PERMISSION = {
@@ -37,7 +42,28 @@ TOOL_PROFILES = {
 CODEX_EFFORT = {"low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high"}
 
 
-def claude_argv(agent: AgentSpec, session_id: Optional[str], resume: bool) -> List[str]:
+def ask_mcp_config() -> str:
+    """Inline MCP config that registers the bridge's `ask_user` tool.
+
+    Passed as a JSON string because `--mcp-config` accepts files or strings, and an
+    inline value leaves no generated file to clean up.
+    """
+    return json.dumps({
+        "mcpServers": {
+            "bridge-ask": {
+                "command": sys.executable,
+                "args": [str(MCP_ASK_SCRIPT)],
+            }
+        }
+    })
+
+
+def claude_argv(
+    agent: AgentSpec,
+    session_id: Optional[str],
+    resume: bool,
+    stream_input: bool = False,
+) -> List[str]:
     argv = [
         "claude",
         "-p",
@@ -46,6 +72,8 @@ def claude_argv(agent: AgentSpec, session_id: Optional[str], resume: bool) -> Li
         # never wait for a human to answer a permission prompt -> never hang
         "--permission-prompts", "none",
     ]
+    if stream_input:
+        argv += ["--input-format", "stream-json"]
     argv += CLAUDE_PERMISSION[agent.permission]
     argv += ["--effort", agent.effort]
     if agent.model:
@@ -70,11 +98,30 @@ def claude_argv(agent: AgentSpec, session_id: Optional[str], resume: bool) -> Li
     # nothing follows the final group, so no value can be swallowed by accident.
     for directory in agent.add_dirs:
         argv += ["--add-dir", directory]
-    if agent.allowed_tools:
-        argv += ["--allowedTools", *agent.allowed_tools]
+    # ask_user is pre-approved: a headless run has no one to answer a prompt for it,
+    # and without this rule every call is auto-denied before the tool ever runs.
+    allowed = [ASK_TOOL_RULE, *[t for t in agent.allowed_tools if t != ASK_TOOL_RULE]]
+    argv += ["--allowedTools", *allowed]
     if agent.disallowed_tools:
         argv += ["--disallowedTools", *agent.disallowed_tools]
+    argv += ["--mcp-config", ask_mcp_config()]
     return argv
+
+
+def claude_stdin(prompt: str, images: List[Dict[str, Any]]) -> str:
+    """Build one stream-json input line carrying text and image blocks.
+
+    Claude Code reads this from stdin when `--input-format stream-json` is set. It is
+    the only way to hand the CLI images: a plain `-p` prompt is text-only.
+    """
+    content: List[Dict[str, Any]] = []
+    if prompt:
+        content.append({"type": "text", "text": prompt})
+    content.extend(images)
+    return json.dumps(
+        {"type": "user", "message": {"role": "user", "content": content}},
+        ensure_ascii=False,
+    ) + "\n"
 
 
 def codex_argv(agent: AgentSpec, workdir: Path, session_id: Optional[str], resume: bool) -> List[str]:
@@ -98,6 +145,7 @@ def build_invocation(
     cfg: BridgeConfig,
     session_id: Optional[str] = None,
     resume: bool = False,
+    stream_input: bool = False,
 ) -> Tuple[List[str], Path]:
     """Return (argv, cwd).
 
@@ -108,7 +156,7 @@ def build_invocation(
     """
     workdir = resolve_workdir(agent, cfg)
     if agent.cli == "claude":
-        argv = claude_argv(agent, session_id, resume)
+        argv = claude_argv(agent, session_id, resume, stream_input)
     else:
         argv = codex_argv(agent, workdir, session_id, resume)
     return argv, workdir

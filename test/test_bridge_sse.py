@@ -88,6 +88,112 @@ def test_result_is_used_as_fallback_when_nothing_streamed():
     assert state.emitted is True
 
 
+def test_ask_user_is_rendered_with_options():
+    text, state = _feed([
+        _assistant([{
+            "type": "tool_use",
+            "id": "q1",
+            "name": "mcp__bridge-ask__ask_user",
+            "input": {
+                "question": "Chọn DB nào?",
+                "options": [
+                    {"label": "Postgres", "description": "ổn định"},
+                    {"label": "SQLite"},
+                ],
+            },
+        }]),
+    ])
+    assert "Chọn DB nào?" in text
+    assert "1. **Postgres** — ổn định" in text
+    assert "2. **SQLite**" in text
+    assert state.ask == {
+        "question": "Chọn DB nào?",
+        "options": [
+            {"label": "Postgres", "description": "ổn định"},
+            {"label": "SQLite", "description": ""},
+        ],
+        "multi_select": False,
+    }
+
+
+def test_ask_user_accepts_string_options():
+    text, state = _feed([
+        _assistant([{
+            "type": "tool_use",
+            "id": "q1",
+            "name": "mcp__bridge-ask__ask_user",
+            "input": {"question": "Tiếp?", "options": ["Có", "Không"]},
+        }]),
+    ])
+    assert "1. **Có**" in text and "2. **Không**" in text
+    assert [o["label"] for o in state.ask["options"]] == ["Có", "Không"]
+
+
+def test_ask_user_tool_result_is_suppressed():
+    text, _ = _feed([
+        _assistant([{
+            "type": "tool_use",
+            "id": "q1",
+            "name": "mcp__bridge-ask__ask_user",
+            "input": {"question": "Tiếp?"},
+        }]),
+        {
+            "type": "user",
+            "message": {"content": [{
+                "type": "tool_result",
+                "tool_use_id": "q1",
+                "content": "Question shown to the user in the chat.",
+            }]},
+        },
+    ])
+    assert "Question shown" not in text
+    assert "Tiếp?" in text
+
+
+def test_regular_tool_result_still_shown_next_to_ask():
+    text, _ = _feed([
+        _assistant([{
+            "type": "tool_use",
+            "id": "q1",
+            "name": "mcp__bridge-ask__ask_user",
+            "input": {"question": "Tiếp?"},
+        }]),
+        {
+            "type": "user",
+            "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "q1", "content": "hidden"},
+                {"type": "tool_result", "tool_use_id": "t2", "content": "visible"},
+            ]},
+        },
+    ])
+    assert "hidden" not in text
+    assert "visible" in text
+
+
+def test_tool_steps_are_collected_for_handoff():
+    _, state = _feed([
+        _assistant([
+            {"type": "tool_use", "id": "t1", "name": "Edit", "input": {"file_path": "a.py"}},
+            {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "ls"}},
+            {"type": "tool_use", "id": "q1", "name": "mcp__bridge-ask__ask_user",
+             "input": {"question": "Tiếp?"}},
+        ]),
+    ])
+    assert [s["tool"] for s in state.steps] == ["Edit", "Bash"]
+    assert state.ask["question"] == "Tiếp?"
+
+
+def test_all_tool_steps_are_kept():
+    blocks = [
+        {"type": "tool_use", "id": f"t{i}", "name": "Bash", "input": {"command": f"cmd-{i}"}}
+        for i in range(35)
+    ]
+    _, state = _feed([_assistant(blocks)])
+    assert len(state.steps) == 35
+    assert "cmd-0" in state.steps[0]["input"]
+    assert "cmd-34" in state.steps[-1]["input"]
+
+
 def test_permission_denials_are_surfaced():
     text, state = _feed([
         _assistant([{"type": "text", "text": "Đã thử."}]),

@@ -136,6 +136,16 @@ def test_bypass_allowed_after_flag_enabled(client, env):
     assert resp.status_code == 200
 
 
+def test_restricted_rejects_bypass(client, env):
+    client.post("/api/agents/settings", json={"allow_bypass": True})
+    resp = client.post(
+        "/api/agents",
+        json=_payload(env["workdir"], permission="bypass", restricted=True),
+    )
+    assert resp.status_code == 400
+    assert "restricted" in resp.json()["detail"]
+
+
 def test_delete_agent(client, env):
     client.post("/api/agents", json=_payload(env["workdir"]))
     resp = client.delete("/api/agents/a9")

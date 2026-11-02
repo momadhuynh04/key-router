@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from bridge.config import AgentSpec, BridgeConfig
@@ -45,6 +47,49 @@ def test_claude_uses_print_mode(tmp_path):
     assert "-p" in argv
 
 
+def test_stream_input_flag_is_opt_in(tmp_path):
+    cfg, workdir = _cfg(tmp_path)
+
+    plain, _ = registry.build_invocation(_agent(workdir), cfg)
+    assert "--input-format" not in plain
+
+    streaming, _ = registry.build_invocation(_agent(workdir), cfg, stream_input=True)
+    assert _value_after(streaming, "--input-format") == "stream-json"
+
+
+def test_claude_stdin_carries_text_and_images():
+    block = {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/png", "data": "abc"},
+    }
+    line = registry.claude_stdin("mô tả ảnh", [block])
+    assert line.endswith("\n")
+
+    payload = json.loads(line)
+    assert payload["type"] == "user"
+    assert payload["message"]["role"] == "user"
+    assert payload["message"]["content"] == [{"type": "text", "text": "mô tả ảnh"}, block]
+
+
+def test_claude_stdin_omits_empty_text():
+    line = registry.claude_stdin("", [{"type": "image", "source": {}}])
+    content = json.loads(line)["message"]["content"]
+    assert len(content) == 1
+    assert content[0]["type"] == "image"
+
+
+def test_ask_user_mcp_server_is_registered(tmp_path):
+    cfg, workdir = _cfg(tmp_path)
+    argv, _ = registry.build_invocation(
+        _agent(workdir, allowed_tools=["Bash(git *)"], disallowed_tools=["Bash(rm *)"]),
+        cfg,
+    )
+
+    config = json.loads(_value_after(argv, "--mcp-config"))
+    server = config["mcpServers"]["bridge-ask"]
+    assert server["args"][-1].endswith("mcp_ask.py")
+
+
 def test_build_invocation_takes_no_prompt(tmp_path):
     """`--tools`, `--add-dir`, `--allowedTools` are variadic and would eat a trailing prompt.
 
@@ -70,11 +115,11 @@ def test_variadic_options_are_grouped_last(tmp_path):
     )
     argv, _ = registry.build_invocation(agent, cfg)
 
-    assert argv[-4:] == [
-        "--allowedTools", "Bash(git *)",
-        "--disallowedTools", "Bash(rm *)",
-    ]
-    assert argv[-6:-4] == ["--add-dir", str(extra)]
+    assert argv[-9:-7] == ["--add-dir", str(extra)]
+    assert argv[-7:-4] == ["--allowedTools", registry.ASK_TOOL_RULE, "Bash(git *)"]
+    assert argv[-4:-2] == ["--disallowedTools", "Bash(rm *)"]
+    assert argv[-2] == "--mcp-config"
+    assert argv[-1].startswith("{")
 
 
 def test_claude_permission_modes(tmp_path):
@@ -132,10 +177,11 @@ def test_advanced_flags_omitted_when_unset(tmp_path):
         "--fallback-model",
         "--max-budget-usd",
         "--append-system-prompt",
-        "--allowedTools",
         "--disallowedTools",
     ):
         assert flag not in argv
+    # ask_user is always pre-approved, even when the user set no patterns.
+    assert argv[argv.index("--allowedTools") + 1] == registry.ASK_TOOL_RULE
 
 
 def test_claude_restricted_and_add_dirs(tmp_path):

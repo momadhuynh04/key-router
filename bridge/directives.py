@@ -8,7 +8,8 @@ import re
 from dataclasses import dataclass
 
 _DIRECTIVE_RE = re.compile(
-    r"^/(start|stop|agents|list|help)\b[ \t]*(.*)$", re.IGNORECASE | re.DOTALL
+    r"^/(start|stop|call|sub|run|agents|list|help)\b[ \t]*(.*)$",
+    re.IGNORECASE | re.DOTALL,
 )
 
 
@@ -33,6 +34,17 @@ def parse(message: str) -> Parsed:
 
     if cmd == "stop":
         return Parsed(kind="stop", agent_id=rest.split()[0] if rest else None, text="")
+
+    # /call [agent-id] [prompt] — one-off sub-agent, does not touch the binding
+    if cmd in ("call", "sub", "run"):
+        if not rest:
+            return Parsed(kind="call", agent_id=None, text="")
+        parts = rest.split(None, 1)
+        return Parsed(
+            kind="call",
+            agent_id=parts[0],
+            text=parts[1] if len(parts) > 1 else "",
+        )
 
     # /start [agent-id] [remaining prompt]
     if not rest:

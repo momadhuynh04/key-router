@@ -8,11 +8,12 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 MAX_TOOL_PREVIEW = 200
 MAX_RESULT_PREVIEW = 160
 MAX_DENIALS = 5
+MAX_STEP_INPUT = 160
 
 
 def _clip(value: Any, limit: int) -> str:
@@ -32,6 +33,9 @@ class TurnState:
     cost_usd: Optional[float] = None
     duration_ms: Optional[int] = None
     num_turns: Optional[int] = None
+    ask: Optional[dict] = None
+    ask_tool_ids: Set[str] = field(default_factory=set)
+    steps: List[dict] = field(default_factory=list)
 
 
 def feed(event: Dict[str, Any], state: TurnState) -> List[str]:
@@ -44,10 +48,52 @@ def feed(event: Dict[str, Any], state: TurnState) -> List[str]:
     if etype == "assistant":
         return _feed_assistant(event, state)
     if etype == "user":
-        return _feed_user(event)
+        return _feed_user(event, state)
     if etype == "result":
         return _feed_result(event, state)
     return []
+
+
+def _ask_from_input(raw: Any) -> dict:
+    """Normalize the `ask_user` tool input into {question, options, multi_select}."""
+    data = raw if isinstance(raw, dict) else {}
+    question = str(data.get("question") or data.get("prompt") or "").strip()
+    options: List[dict] = []
+    for item in data.get("options") or []:
+        if isinstance(item, str):
+            label, description = item, ""
+        elif isinstance(item, dict):
+            label = item.get("label") or item.get("value") or item.get("text") or ""
+            description = item.get("description") or item.get("detail") or ""
+        else:
+            continue
+        label = str(label).strip()
+        if label:
+            options.append({"label": label, "description": str(description).strip()})
+    return {
+        "question": question,
+        "options": options,
+        "multi_select": bool(data.get("multi_select")),
+    }
+
+
+def _render_ask(ask: dict) -> str:
+    lines = [f"\n\n❓ **{ask.get('question') or 'The agent has a question.'}**\n"]
+    options = ask.get("options") or []
+    if options:
+        for index, option in enumerate(options, 1):
+            suffix = f" — {option['description']}" if option.get("description") else ""
+            lines.append(f"{index}. **{option['label']}**{suffix}")
+        lines.append("")
+        hint = "one or more numbers/labels" if ask.get("multi_select") else "a number or label"
+        lines.append(f"_Reply with {hint}, or type your own answer._")
+    else:
+        lines.append("_Reply to continue._")
+    return "\n".join(lines) + "\n\n"
+
+
+def _is_ask_tool(name: str) -> bool:
+    return name.endswith("ask_user")
 
 
 def _feed_assistant(event: Dict[str, Any], state: TurnState) -> List[str]:
@@ -64,15 +110,29 @@ def _feed_assistant(event: Dict[str, Any], state: TurnState) -> List[str]:
                 out.append(text)
         elif btype == "tool_use":
             name = block.get("name") or "tool"
-            out.append(f"\n\n**▸ {name}** `{_clip(block.get('input'), MAX_TOOL_PREVIEW)}`\n\n")
+            if _is_ask_tool(name):
+                tool_id = block.get("id")
+                if tool_id:
+                    state.ask_tool_ids.add(tool_id)
+                state.ask = _ask_from_input(block.get("input"))
+                state.emitted = True
+                out.append(_render_ask(state.ask))
+            else:
+                state.steps.append({
+                    "tool": name,
+                    "input": _clip(block.get("input"), MAX_STEP_INPUT),
+                })
+                out.append(f"\n\n**▸ {name}** `{_clip(block.get('input'), MAX_TOOL_PREVIEW)}`\n\n")
     return out
 
 
-def _feed_user(event: Dict[str, Any]) -> List[str]:
+def _feed_user(event: Dict[str, Any], state: TurnState) -> List[str]:
     out: List[str] = []
     message = event.get("message") or {}
     for block in message.get("content") or []:
         if not isinstance(block, dict) or block.get("type") != "tool_result":
+            continue
+        if block.get("tool_use_id") in state.ask_tool_ids:
             continue
         content = block.get("content")
         if isinstance(content, list):

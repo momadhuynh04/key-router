@@ -21,6 +21,10 @@ from bridge.config import BridgeConfig
 
 STDERR_LINES = 40
 KILL_GRACE_SEC = 5.0
+# asyncio's StreamReader defaults to 64 KiB per line. One JSONL event can carry a
+# base64 image (a 500 KB screenshot becomes ~680 KB of base64), so readline() would
+# blow up with "Separator is not found, and chunk exceed the limit".
+MAX_LINE_BYTES = 64 * 1024 * 1024
 
 
 class TurnTimeout(RuntimeError):
@@ -117,7 +121,8 @@ async def _drain(stream: Optional[asyncio.StreamReader], sink: Deque[str]) -> No
             if not line:
                 break
             sink.append(line.decode("utf-8", "replace").rstrip())
-    except (asyncio.CancelledError, OSError):
+    except (asyncio.CancelledError, OSError, ValueError):
+        # ValueError here means a single stderr line exceeded MAX_LINE_BYTES.
         pass
 
 
@@ -140,6 +145,7 @@ async def run_cli(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
+            limit=MAX_LINE_BYTES,
         )
     except FileNotFoundError as e:
         raise RunError(f"CLI {argv[0]!r} not found in PATH") from e
@@ -178,6 +184,11 @@ async def run_cli(
                 timed_out = True
                 raise TurnTimeout(
                     f"Turn exceeded {cfg.turn_timeout_sec}s and was stopped"
+                ) from e
+            except ValueError as e:
+                # StreamReader.readline() converts an over-long line into ValueError.
+                raise RunError(
+                    f"CLI emitted a line larger than {MAX_LINE_BYTES // (1024 * 1024)} MiB"
                 ) from e
             if not line:
                 break

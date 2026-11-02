@@ -4,10 +4,11 @@
   <h3><strong>Claude Code + Codex — 1 key, universal proxy</strong></h3>
 
   <p>
+    <img src="https://img.shields.io/badge/version-0.1.32-blueviolet.svg" alt="v0.1.32">
     <img src="https://img.shields.io/badge/Python-3.11+-blue.svg" alt="Python 3.11+">
     <img src="https://img.shields.io/badge/Framework-FastAPI-009688.svg" alt="FastAPI">
     <img src="https://img.shields.io/badge/Frontend-React%20%2B%20Tailwind-61DAFB.svg" alt="React">
-    <img src="https://img.shields.io/badge/Testing-PyTest%20262%20tests-brightgreen.svg" alt="262 tests">
+    <img src="https://img.shields.io/badge/Testing-PyTest%20298%20tests-brightgreen.svg" alt="298 tests">
     <img src="https://img.shields.io/badge/Streaming-SSE-orange.svg" alt="SSE">
     <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-0078D6.svg" alt="Platform">
     <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
@@ -17,11 +18,13 @@
 
   <p>
     <a href="#features">Features</a> •
+    <a href="#tested-with">Tested with</a> •
     <a href="#quick-start">Quick Start</a> •
     <a href="#usage">Usage</a> •
     <a href="#configuration">Configuration</a> •
     <a href="#architecture">Architecture</a> •
-    <a href="#project-structure">Project Structure</a>
+    <a href="#project-structure">Project Structure</a> •
+    <a href="CHANGELOG.md">Changelog</a>
   </p>
 
   <p>Language: <strong>English</strong> | <a href="#tiếng-việt">Tiếng Việt</a></p>
@@ -52,8 +55,25 @@
 | **Custom providers** | Any OpenAI/Anthropic API via WebUI or `python -m cli add-provider`. Keys by ENV name (`MY_API_KEY`), never raw. |
 | **IDE auto-detect & launch** | VS Code, VSCodium, Cursor — sets `~/.claude/settings.json`, `~/.codex/config.toml`, `disableLoginPrompt`. |
 | **WebUI** | React + Tailwind dashboard for routing, provider CRUD, IDE detection and launch. |
-| **Agent bridge** | Run Claude Code as a **real agent** (edits files, runs commands) from any chat UI. A separate `agent-bridge` service exposes one OpenAI-compatible model, `key-router-agents`; driven by `/start` `/stop` `/agents`. Managed from the WebUI **Agents** tab. |
+| **Agent bridge** | Run Claude Code as a **real agent** (edits files, runs commands) from any chat UI. A separate `agent-bridge` service exposes one OpenAI-compatible model, `key-router-agents`; driven by `/start` `/stop` `/agents` `/call`. Pasted images are forwarded to the CLI, agents can ask you questions with `ask_user`, and `/call` runs one-off sub-agents whose steps + result are handed to the main agent. Managed from the WebUI **Agents** tab. |
 | **Cross-platform** | Windows / Linux / macOS. `start.sh` / `start.bat`, `dev.sh` / `dev.bat`. |
+
+---
+
+## Tested with
+
+Last verified on **Arch Linux** (2026-11-02):
+
+| Component | Version | Notes |
+| --------- | ------- | ----- |
+| Claude Code | **2.1.304** | CLI + VS Code extension (`--print --output-format stream-json`) |
+| Codex | **0.149.0** | `codex exec`, Responses API |
+| Open WebUI | **0.10.2** | Agent bridge (`:8083`) |
+| Python | 3.11+ | |
+| Node.js | 18+ · 22.20+ for Skills | |
+
+Other versions may work. The Agent bridge depends on the CLI flags above; if a CLI renames them, update
+`bridge/registry.py`. See [CHANGELOG.md](CHANGELOG.md) for what changed in 0.1.32.
 
 ---
 
@@ -209,7 +229,24 @@ chosen project folder. It is a **separate service** (default `:8083`) that you s
    `allowed_roots` — that is the safety fence.
 3. In Open WebUI: **Settings → Connections → OpenAI API** → URL `http://127.0.0.1:8083/v1`,
    key = the bridge token shown in the dashboard.
-4. Set `ENABLE_FORWARD_USER_INFO_HEADERS=True` on Open WebUI, otherwise every chat shares one session.
+4. Set `ENABLE_FORWARD_USER_INFO_HEADERS=True` before Open WebUI starts, otherwise every chat
+   shares one session:
+
+   ```bash
+   # Linux / macOS (start.sh)
+   export ENABLE_FORWARD_USER_INFO_HEADERS=True
+   open-webui serve
+   ```
+
+   ```bat
+   REM Windows (start.bat / CMD)
+   set ENABLE_FORWARD_USER_INFO_HEADERS=True
+   open-webui serve
+   ```
+
+   PowerShell: `$env:ENABLE_FORWARD_USER_INFO_HEADERS="True"; open-webui serve`
+
+   Docker: add `-e ENABLE_FORWARD_USER_INFO_HEADERS=True` (or the matching `environment:` entry).
 
 Open WebUI sees exactly **one** model, `key-router-agents`. You pick the agent inside the chat:
 
@@ -217,13 +254,21 @@ Open WebUI sees exactly **one** model, `key-router-agents`. You pick the agent i
 | ------- | ------ |
 | `/agents` | List configured agents |
 | `/start <id>` | Bind an agent to this chat and open a session |
+| `/call <id> <prompt>` | Run a one-off sub-agent on this chat's history; the binding is untouched |
 | `/stop` | Kill the running turn and unbind |
 | anything else | Sent to the bound agent (`default_agent` is auto-started when nothing is bound) |
+
+A `/call` (aliases `/sub`, `/run`) runs that agent in its own workdir with a text transcript of the chat
+(last 80 messages, capped at 24k chars). It is not bound to the chat and does not touch the main
+agent's session. When it finishes, its task, a compact list of tool steps, and its final result are
+queued and injected as a `[Sub-agent handoff …]` block at the start of the main agent's next turn.
+If the sub-agent calls `ask_user`, your next message continues that sub-agent's session, not the main one.
 
 Tool calls, permission denials, cost and duration are rendered inline in the reply.
 
 > If Open WebUI swallows messages that start with `/`, create Workspace → Prompts named
-> `/agent-start`, `/agent-stop`, `/agent-list` with bodies `/start {{id}}`, `/stop`, `/agents`.
+> `/agent-start`, `/agent-call`, `/agent-stop`, `/agent-list` with bodies
+> `/start {{id}}`, `/call {{id}} {{task}}`, `/stop`, `/agents`.
 
 **Permission** is per agent: `plan` (read-only), `edit` (`acceptEdits` — edits only inside the workdir),
 `auto`, `ci` (`dontAsk`), `bypass` (only when `allow_bypass` is on; containers/VMs only). Headless runs
@@ -332,7 +377,19 @@ automatically when the proxy starts (Sonnet's route is kept). An exact model key
 | `allowed_tools` | `--allowedTools` | Extra pre-approved patterns, e.g. `Bash(git *)` |
 | `disallowed_tools` | `--disallowedTools` | Denied patterns; apply in every permission mode |
 
-Every run also passes `--permission-prompts none`, so a headless turn never waits for a human.
+Every run also passes `--permission-prompts none`, so a headless turn never waits for a human: anything that would
+prompt is denied, and the turn footer lists those denials as **Blocked by permissions**. This is why `permission: edit`
+approves file edits but still denies Bash (`rg`, `find`, `git`); use `permission: auto` or add
+`allowed_tools` patterns such as `Bash(rg:*)` when an agent needs shell commands.
+
+Images pasted into the chat are forwarded to the CLI as image blocks. Those turns switch stdin to
+`--input-format stream-json`; text-only turns keep the plain stdin path.
+
+Claude Code's `AskUserQuestion` tool is not available under `-p`, so the bridge registers a small MCP
+server (`bridge/mcp_ask.py`) that exposes `ask_user(question, options[])`. The turn renders the question
+with numbered choices and then stops; the user's next message is framed as the answer
+(`[User answered AskUserQuestion] …`) on the resumed session. The tool is pre-approved through
+`--allowedTools`, otherwise headless mode would auto-deny it.
 
 The bridge re-reads this file on every request, so dashboard changes apply immediately — no restart.
 
@@ -362,7 +419,7 @@ python -m pytest test/ -v
 | `test_openrouter.py` · `test_deepseek.py` | Adapters |
 | `test_bridge_*.py` · `test_agents_api.py` | Agent bridge: directives, argv, SSE, API, dashboard CRUD |
 
-218 tests.
+298 tests.
 
 **Add a provider (code):** see [provider/CUSTOM_PROVIDER_GUIDE.md](provider/CUSTOM_PROVIDER_GUIDE.md) — inherit `OpenAIBaseProvider` or `BaseProvider`, register in `proxy/router.py`.
 
@@ -390,13 +447,18 @@ key-router/
 ├── bridge/           agent-bridge: OpenAI-compatible front for Claude Code / Codex
 ├── webui/            React + Tailwind (App.tsx, AgentModal.tsx, BridgePanel.tsx, SkillsPanel.tsx)
 ├── cli/              typer CLI (serve, add/list/remove provider)
-├── test/             262 tests
+├── test/             298 tests
 └── start.sh / dev.sh
 ```
 
 ---
 
 ## Tiếng Việt
+
+### Đã test với
+
+Arch Linux · Claude Code **2.1.304** · Codex **0.149.0** · Open WebUI **0.10.2** · Python 3.11+ ·
+Node 18+ (22.20+ cho Skills). Xem [CHANGELOG.md](CHANGELOG.md) để biết thay đổi của bản 0.1.32.
 
 ### Cài đặt
 
@@ -458,7 +520,7 @@ Tab **Agent launcher**: **Claude Code** mở terminal đã set `ANTHROPIC_BASE_U
 
 **Custom provider:** bấm **+ Add custom provider** → điền ID, Base URL (`https://api.xxx/v1`), API key **tên biến ENV** (ví dụ `MY_API_KEY`) — nhớ thêm `MY_API_KEY=sk-...` vào `.env` rồi restart. Hoặc CLI `python -m cli add-provider ...` như bản tiếng Anh.
 
-**Chạy agent từ Open WebUI:** vào tab **Agents** → **Start bridge** (service riêng, mặc định `:8083`; key-router không spawn gì trên đường dữ liệu). Thêm agent ngay trên UI: CLI, model, workdir, quyền, effort, tools — `workdir` bắt buộc nằm trong `allowed_roots`. Sau đó trong Open WebUI: **Settings → Connections → OpenAI API**, URL `http://127.0.0.1:8083/v1`, key là token hiện trong dashboard, và bật `ENABLE_FORWARD_USER_INFO_HEADERS=True`.
+**Chạy agent từ Open WebUI:** vào tab **Agents** → **Start bridge** (service riêng, mặc định `:8083`; key-router không spawn gì trên đường dữ liệu). Thêm agent ngay trên UI: CLI, model, workdir, quyền, effort, tools — `workdir` bắt buộc nằm trong `allowed_roots`. Sau đó trong Open WebUI: **Settings → Connections → OpenAI API**, URL `http://127.0.0.1:8083/v1`, key là token hiện trong dashboard, và bật `ENABLE_FORWARD_USER_INFO_HEADERS=True` (native: `export ENABLE_FORWARD_USER_INFO_HEADERS=True` trong `start.sh` trước `open-webui serve`; Docker: thêm `-e` hoặc entry `environment:`).
 
 Open WebUI chỉ thấy **đúng một model** `key-router-agents`. Chọn agent bằng lệnh trong chat:
 
@@ -466,8 +528,15 @@ Open WebUI chỉ thấy **đúng một model** `key-router-agents`. Chọn agent
 | ---- | -------- |
 | `/agents` | Liệt kê agent đã cấu hình |
 | `/start <id>` | Gắn agent vào chat này và mở phiên |
+| `/call <id> <prompt>` | Chạy sub-agent một lần trên history của chat, không đổi agent đang gắn |
 | `/stop` | Dừng lượt đang chạy và gỡ gắn kết |
 | text thường | Gửi tới agent đang gắn (tự `/start default_agent` nếu chưa gắn) |
+
+`/call` (alias `/sub`, `/run`) chạy agent đó trong workdir riêng với transcript text của chat (80 tin
+gần nhất, tối đa 24k ký tự). Nó không bị gắn vào chat và không đụng session của agent chính. Khi xong,
+task + danh sách tool steps + kết quả cuối được xếp hàng và chèn thành block `[Sub-agent handoff …]` ở
+đầu lượt kế tiếp của agent chính. Nếu sub-agent gọi `ask_user`, tin nhắn tiếp theo của bạn sẽ tiếp tục
+session của sub-agent đó.
 
 Tool call, danh sách bị chặn quyền, cost và thời gian đều hiện ngay trong câu trả lời. Quyền đặt theo từng agent: `plan` (chỉ đọc), `edit` (sửa trong workdir), `auto`, `ci`, `bypass` (chỉ khi bật `allow_bypass`). Chạy headless không có prompt tương tác — thứ gì cần hỏi thì **bị từ chối luôn** và hiện lý do trong chat.
 
@@ -480,3 +549,5 @@ Tool call, danh sách bị chặn quyền, cost và thời gian đều hiện ng
 ## License
 
 MIT — see [LICENSE](LICENSE). © 2026 [huynhhoang04](https://github.com/momadhuynh04)
+
+Release notes: [CHANGELOG.md](CHANGELOG.md).

@@ -11,13 +11,20 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from bridge import directives, registry, sse
-from bridge.config import MODEL_ID, AgentSpec, BridgeConfig, ensure_config, find_agent
+from bridge.config import (
+    MODEL_ID,
+    AgentConfigError,
+    AgentSpec,
+    BridgeConfig,
+    ensure_config,
+    find_agent,
+)
 from bridge.runner import TURNS, RunError, TurnTimeout, run_cli
 from bridge.sessions import GLOBAL_KEY, store
 
@@ -65,21 +72,52 @@ def _chat_key(request: Request) -> str:
     return request.headers.get("x-openwebui-chat-id") or GLOBAL_KEY
 
 
-def _last_user_text(messages: Any) -> str:
+def _image_block(value: Any) -> Optional[Dict[str, Any]]:
+    """Turn an OpenAI/Responses image part into an Anthropic image block."""
+    if isinstance(value, dict):
+        value = value.get("url") or value.get("image_url") or value.get("file_id")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    url = value.strip()
+
+    if url.startswith("data:"):
+        header, sep, data = url.partition(",")
+        if not sep or ";base64" not in header or not data:
+            return None
+        media_type = header[len("data:"):].split(";", 1)[0] or "image/png"
+        return {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
+
+    if url.startswith(("http://", "https://")):
+        return {"type": "image", "source": {"type": "url", "url": url}}
+
+    return None
+
+
+def _last_user_content(messages: Any) -> Tuple[str, List[Dict[str, Any]]]:
+    """Return the text and image blocks of the last user message."""
     for msg in reversed(messages or []):
         if not isinstance(msg, dict) or (msg.get("role") or "") != "user":
             continue
         content = msg.get("content")
         if isinstance(content, str):
-            return content
+            return content, []
         if isinstance(content, list):
-            parts = [
-                p.get("text", "")
-                for p in content
-                if isinstance(p, dict) and p.get("type") in ("text", "input_text")
-            ]
-            return "\n".join(x for x in parts if x)
-    return ""
+            texts: List[str] = []
+            images: List[Dict[str, Any]] = []
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                ptype = part.get("type")
+                if ptype in ("text", "input_text"):
+                    text = part.get("text") or ""
+                    if text:
+                        texts.append(text)
+                elif ptype in ("image_url", "input_image"):
+                    block = _image_block(part.get("image_url") or part.get("url"))
+                    if block:
+                        images.append(block)
+            return "\n".join(texts), images
+    return "", []
 
 
 def agents_text(cfg: BridgeConfig) -> str:
@@ -97,7 +135,11 @@ def agents_text(cfg: BridgeConfig) -> str:
             f"permission: {agent.permission} · effort: {agent.effort} · tools: {agent.tools}"
         )
         lines.append(f"  - workdir: `{agent.workdir}`")
-    lines += ["", "Start one with `/start <id>`, stop it with `/stop`."]
+    lines += [
+        "",
+        "Start one with `/start <id>`, stop it with `/stop`.",
+        "Run a one-off helper without rebinding the chat with `/call <id> <prompt>`.",
+    ]
     return "\n".join(lines)
 
 
@@ -117,6 +159,114 @@ def start_text(agent: AgentSpec, cfg: BridgeConfig, had_session: bool) -> str:
 
 def _concurrency_notice(limit: int) -> str:
     return f"{limit} turns are already running (the configured limit). Try again once one finishes."
+
+
+HISTORY_MAX_MESSAGES = 80
+HISTORY_MAX_CHARS = 24000
+HANDOFF_RESULT_CHARS = 4000
+
+
+def _content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: List[str] = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            ptype = part.get("type")
+            if ptype in ("text", "input_text"):
+                text = (part.get("text") or "").strip()
+                if text:
+                    parts.append(text)
+            elif ptype in ("image_url", "input_image", "image"):
+                parts.append("[image attached]")
+        return "\n".join(parts)
+    return ""
+
+
+def _history_text(
+    messages: Any,
+    max_messages: int = HISTORY_MAX_MESSAGES,
+    max_chars: int = HISTORY_MAX_CHARS,
+) -> str:
+    """Format the Open WebUI chat history for a one-off sub-agent prompt."""
+    rows: List[str] = []
+    for msg in list(messages or [])[-max_messages:]:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        text = _content_text(msg.get("content"))
+        if text:
+            rows.append(f"{role}: {text}")
+    if not rows:
+        return ""
+    out = "\n\n".join(rows)
+    if len(out) > max_chars:
+        out = "…(older messages truncated)…\n\n" + out[-max_chars:]
+    return out
+
+
+def _subagent_prompt(agent: AgentSpec, task: str, history: str) -> str:
+    lines = [
+        f"You are running as a one-off sub-agent `{agent.id}` invoked by a slash command.",
+        "You are NOT bound to this chat; another agent owns it. Do your task, then end your turn.",
+        "This run is independent: use the chat history below only as context.",
+        "End with a short summary of what you did — the main agent only sees that summary.",
+        "",
+    ]
+    if history:
+        lines += ["[Chat history — may be truncated]", history, ""]
+    lines += ["[Task from the user]", task]
+    return "\n".join(lines)
+
+
+def _handoff_prefix(runs: List[dict]) -> str:
+    lines = [
+        "[Sub-agent handoff — runs you did not see. They are finished one-off processes, "
+        "not live peer sessions; do not message them.]"
+    ]
+    for run in runs:
+        status = "ok" if run.get("ok", True) else "error"
+        workdir = run.get("workdir") or ""
+        head = f"- `{run.get('agent_id')}` ({status}"
+        head += f" · workdir `{workdir}`" if workdir else ""
+        head += f") · task: {(run.get('task') or '').strip()}"
+        lines.append(head)
+
+        steps = run.get("steps") or []
+        if steps:
+            rendered = [
+                f"`{s.get('tool')}` {s.get('input')}"
+                for s in steps
+                if isinstance(s, dict)
+            ]
+            lines.append("  Steps: " + " · ".join(rendered))
+
+        result = (run.get("result") or "").strip()
+        if result:
+            if len(result) > HANDOFF_RESULT_CHARS:
+                result = result[:HANDOFF_RESULT_CHARS] + "…"
+            lines.append("  Result: " + result.replace("\n", "\n  "))
+    lines.append("[End sub-agent handoff]")
+    return "\n".join(lines)
+
+
+def _answer_prefix(pending: dict, answer: str) -> str:
+    """Frame the next user message as the answer to the agent's `ask_user` call."""
+    lines = ["[User answered AskUserQuestion]"]
+    question = (pending.get("question") or "").strip()
+    if question:
+        lines.append(f"Question: {question}")
+    options = [
+        o.get("label") for o in (pending.get("options") or []) if o.get("label")
+    ]
+    if options:
+        lines.append("Options: " + "; ".join(f"{i}) {label}" for i, label in enumerate(options, 1)))
+    lines.append(f"Answer: {answer}")
+    return "\n".join(lines)
 
 
 async def _resolve_agent(
@@ -164,22 +314,34 @@ async def _attempt(
     chat_key: str,
     session_id: Optional[str],
     state: sse.TurnState,
+    images: Optional[List[Dict[str, Any]]] = None,
 ) -> AsyncIterator[str]:
     """Run one CLI process, feeding events into `state` and yielding reply text."""
+    images = images or []
     argv, cwd = registry.build_invocation(
-        agent, cfg, session_id=session_id, resume=bool(session_id)
+        agent,
+        cfg,
+        session_id=session_id,
+        resume=bool(session_id),
+        stream_input=bool(images),
     )
+    payload = registry.claude_stdin(prompt, images) if images else prompt
     logger.info(
-        "spawn agent=%s cli=%s cwd=%s resume=%s session=%s argv=%s",
-        agent.id, agent.cli, cwd, bool(session_id), session_id, argv,
+        "spawn agent=%s cli=%s cwd=%s resume=%s session=%s images=%d argv=%s",
+        agent.id, agent.cli, cwd, bool(session_id), session_id, len(images), argv,
     )
-    async for event in run_cli(cfg, argv, cwd, prompt, chat_key, agent.id, TURNS):
+    async for event in run_cli(cfg, argv, cwd, payload, chat_key, agent.id, TURNS):
         for piece in sse.feed(event, state):
             yield piece
 
 
 async def _run_turn(
-    cfg: BridgeConfig, agent: AgentSpec, prompt: str, chat_key: str, session_id: Optional[str]
+    cfg: BridgeConfig,
+    agent: AgentSpec,
+    prompt: str,
+    chat_key: str,
+    session_id: Optional[str],
+    images: Optional[List[Dict[str, Any]]] = None,
 ) -> AsyncIterator[str]:
     if agent.cli != "claude":
         yield (
@@ -191,7 +353,9 @@ async def _run_turn(
     resuming = bool(session_id)
     state = sse.TurnState()
     try:
-        async for piece in _attempt(cfg, agent, prompt, chat_key, session_id, state):
+        async for piece in _attempt(
+            cfg, agent, prompt, chat_key, session_id, state, images
+        ):
             yield piece
     except RunError:
         if not resuming:
@@ -205,7 +369,9 @@ async def _run_turn(
         store.bind(chat_key, agent.id, None)
         state = sse.TurnState()
         yield "_(could not resume the previous session — started a new one)_\n\n"
-        async for piece in _attempt(cfg, agent, prompt, chat_key, None, state):
+        async for piece in _attempt(
+            cfg, agent, prompt, chat_key, None, state, images
+        ):
             yield piece
 
     if state.session_id:
@@ -216,9 +382,174 @@ async def _run_turn(
             )
         store.set_session_id(chat_key, state.session_id)
 
+    if state.ask:
+        store.set_pending(chat_key, state.ask)
+
+
+async def _run_sub_turn(
+    cfg: BridgeConfig,
+    agent: AgentSpec,
+    prompt: str,
+    chat_key: str,
+    task: str,
+    session_id: Optional[str] = None,
+    fallback_prompt: Optional[str] = None,
+) -> AsyncIterator[str]:
+    """Run a one-off sub-agent. Never touches the chat's binding or main session."""
+    resuming = bool(session_id)
+    state = sse.TurnState()
+    chunks: List[str] = []
+    error_text = ""
+
+    try:
+        try:
+            async for piece in _attempt(
+                cfg, agent, prompt, chat_key, session_id, state
+            ):
+                chunks.append(piece)
+                yield piece
+        except RunError as e:
+            if not resuming:
+                raise
+            logger.warning(
+                "sub-agent resume failed chat=%s agent=%s session=%s — starting fresh",
+                chat_key, agent.id, session_id,
+            )
+            state = sse.TurnState()
+            yield "_(could not resume the sub-agent session — started fresh)_\n\n"
+            async for piece in _attempt(
+                cfg, agent, fallback_prompt or prompt, chat_key, None, state
+            ):
+                chunks.append(piece)
+                yield piece
+    except Exception as e:  # noqa: BLE001 — record the failure for the main agent
+        error_text = str(e)
+        raise
+    finally:
+        if state.ask:
+            pending = dict(state.ask)
+            pending.update({
+                "sub_agent_id": agent.id,
+                "sub_session_id": state.session_id,
+                "task": task,
+            })
+            store.set_pending(chat_key, pending)
+        else:
+            result = (state.final_text or "").strip() or "".join(chunks).strip()
+            store.add_subrun(chat_key, {
+                "agent_id": agent.id,
+                "workdir": agent.workdir,
+                "task": task,
+                "steps": state.steps,
+                "result": error_text or result,
+                "ok": not error_text and not state.is_error,
+            })
+
+
+async def _produce_call(
+    parsed: directives.Parsed,
+    chat_key: str,
+    cfg: BridgeConfig,
+    messages: Any,
+) -> AsyncIterator[str]:
+    if not parsed.agent_id:
+        yield "Usage: `/call <agent-id> <prompt>`\n\n" + agents_text(cfg)
+        return
+
+    agent = find_agent(cfg, parsed.agent_id)
+    if agent is None:
+        yield f"No agent named `{parsed.agent_id}`.\n\n" + agents_text(cfg)
+        return
+
+    task = parsed.text.strip()
+    if not task:
+        yield "Usage: `/call <agent-id> <prompt>` — the prompt is required."
+        return
+
+    if agent.cli != "claude":
+        yield (
+            f"⚠️ Agent `{agent.id}` uses the **{agent.cli}** CLI — Codex support lands in "
+            "Phase 2; only Claude Code runs today."
+        )
+        return
+
+    if not LIMITER.try_acquire():
+        yield _concurrency_notice(LIMITER.limit)
+        return
+
+    history = _history_text((messages or [])[:-1])
+    prompt = _subagent_prompt(agent, task, history)
+    try:
+        yield f"🧩 **{agent.id}** · one-off sub-agent\n\n"
+        async for piece in _run_sub_turn(cfg, agent, prompt, chat_key, task):
+            yield piece
+    except TurnTimeout as e:
+        yield f"\n\n⚠️ {e}"
+    except RunError as e:
+        yield f"\n\n⚠️ {e}"
+    except AgentConfigError as e:
+        yield f"\n\n⚠️ Invalid agent configuration: {e}"
+    except Exception as e:  # noqa: BLE001
+        yield f"\n\n⚠️ Unexpected error: {e}"
+    finally:
+        LIMITER.release()
+
+
+async def _produce_sub_answer(
+    parsed: directives.Parsed,
+    pending: dict,
+    chat_key: str,
+    cfg: BridgeConfig,
+    messages: Any,
+) -> AsyncIterator[str]:
+    """Continue a sub-agent that stopped on ask_user. The main binding is untouched."""
+    sub = find_agent(cfg, pending.get("sub_agent_id") or "")
+    store.set_pending(chat_key, None)
+    if sub is None or sub.cli != "claude":
+        yield f"Sub-agent `{pending.get('sub_agent_id')}` is no longer available. Use `/call` again."
+        return
+
+    task = pending.get("task") or ""
+    answer = parsed.text.strip()
+    prompt = _answer_prefix(pending, answer)
+    fallback = (
+        _subagent_prompt(sub, task, _history_text((messages or [])[:-1]))
+        + "\n\n"
+        + prompt
+    )
+
+    if not LIMITER.try_acquire():
+        yield _concurrency_notice(LIMITER.limit)
+        return
+    try:
+        async for piece in _run_sub_turn(
+            cfg,
+            sub,
+            prompt,
+            chat_key,
+            task,
+            session_id=pending.get("sub_session_id"),
+            fallback_prompt=fallback,
+        ):
+            yield piece
+    except TurnTimeout as e:
+        yield f"\n\n⚠️ {e}"
+    except RunError as e:
+        yield f"\n\n⚠️ {e}"
+    except AgentConfigError as e:
+        yield f"\n\n⚠️ Invalid agent configuration: {e}"
+    except Exception as e:  # noqa: BLE001
+        yield f"\n\n⚠️ Unexpected error: {e}"
+    finally:
+        LIMITER.release()
+
 
 async def produce(
-    parsed: directives.Parsed, chat_key: str, cfg: BridgeConfig
+    parsed: directives.Parsed,
+    chat_key: str,
+    cfg: BridgeConfig,
+    images: Optional[List[Dict[str, Any]]] = None,
+    messages: Any = None,
 ) -> AsyncIterator[str]:
     """Yield the reply text for one chat turn."""
     if parsed.kind == "agents":
@@ -229,6 +560,18 @@ async def produce(
         killed = TURNS.kill(chat_key)
         store.unbind(chat_key)
         yield "🛑 Agent stopped." if killed else "Nothing was running. Agent unbound."
+        return
+
+    if parsed.kind == "call":
+        async for piece in _produce_call(parsed, chat_key, cfg, messages):
+            yield piece
+        return
+
+    # A sub-agent stopped on ask_user: the reply continues that run, not the main agent.
+    pending = store.get_pending(chat_key)
+    if parsed.kind == "prompt" and pending and pending.get("sub_agent_id"):
+        async for piece in _produce_sub_answer(parsed, pending, chat_key, cfg, messages):
+            yield piece
         return
 
     agent, prefix, _reason = await _resolve_agent(parsed, chat_key, cfg)
@@ -242,7 +585,15 @@ async def produce(
         return
 
     prompt = parsed.text.strip()
-    if not prompt:
+    if parsed.kind == "prompt":
+        runs = store.take_subruns(chat_key)
+        if runs:
+            prompt = _handoff_prefix(runs) + "\n\n" + prompt
+        if pending:
+            prompt = _answer_prefix(pending, prompt)
+            store.set_pending(chat_key, None)
+
+    if not prompt and not images:
         return
 
     if not LIMITER.try_acquire():
@@ -254,13 +605,15 @@ async def produce(
         try:
             if prefix:
                 yield "\n\n"
-            async for piece in _run_turn(cfg, agent, prompt, chat_key, session_id):
+            async for piece in _run_turn(
+                cfg, agent, prompt, chat_key, session_id, images
+            ):
                 yield piece
         except TurnTimeout as e:
             yield f"\n\n⚠️ {e}"
         except RunError as e:
             yield f"\n\n⚠️ {e}"
-        except ValueError as e:
+        except AgentConfigError as e:
             yield f"\n\n⚠️ Invalid agent configuration: {e}"
         except Exception as e:  # noqa: BLE001 — surface the error instead of an empty 500
             yield f"\n\n⚠️ Unexpected error: {e}"
@@ -323,20 +676,35 @@ def create_app() -> FastAPI:
 
         chat_key = _chat_key(request)
         messages = body.get("messages") or []
-        parsed = directives.parse(_last_user_text(messages))
+        text, images = _last_user_content(messages)
+        last = messages[-1] if isinstance(messages, list) and messages else {}
+        last_content = last.get("content") if isinstance(last, dict) else None
+        part_types = (
+            [p.get("type") for p in last_content if isinstance(p, dict)]
+            if isinstance(last_content, list)
+            else [type(last_content).__name__]
+        )
+        logger.info(
+            "request chat=%s parts=%s images=%d files=%d",
+            chat_key,
+            part_types,
+            len(images),
+            len(last.get("files") or []) if isinstance(last, dict) else 0,
+        )
+        parsed = directives.parse(text)
         want_stream = bool(body.get("stream"))
         cid = f"chatcmpl-{uuid.uuid4().hex}"
 
         if not want_stream:
             parts: List[str] = []
-            async for piece in produce(parsed, chat_key, cfg):
+            async for piece in produce(parsed, chat_key, cfg, images, messages):
                 parts.append(piece)
             return JSONResponse(sse.completion(cid, MODEL_ID, "".join(parts)))
 
         async def event_stream() -> AsyncIterator[str]:
             yield sse.role_chunk(cid, MODEL_ID)
             try:
-                async for piece in produce(parsed, chat_key, cfg):
+                async for piece in produce(parsed, chat_key, cfg, images, messages):
                     yield sse.text_chunk(cid, MODEL_ID, piece)
             except Exception as e:  # noqa: BLE001
                 yield sse.text_chunk(cid, MODEL_ID, f"\n\n⚠️ {e}")
