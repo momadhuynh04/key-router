@@ -58,12 +58,30 @@ def test_request_content_parts_array_flattened():
     req = _build_openai_request(messages=[
         {"role": "user", "content": [
             {"type": "text", "text": "Part one"},
-            {"type": "image_url", "image_url": {"url": "x"}},  # ignored
+            {"type": "image_url", "image_url": {"url": "x"}},  # invalid URL → ignored
             {"type": "text", "text": "Part two"},
         ]}
     ])
     result = openai_chat_to_anthropic(req)
     assert result.messages[0].content == "Part one\nPart two"
+
+def test_request_image_url_is_preserved():
+    req = _build_openai_request(messages=[
+        {"role": "user", "content": [
+            {"type": "text", "text": "What is this?"},
+            {"type": "image_url", "image_url": {
+                "url": "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+            }},
+        ]}
+    ])
+    result = openai_chat_to_anthropic(req)
+    content = result.messages[0].content
+    assert isinstance(content, list)
+    assert content[0] == {"type": "text", "text": "What is this?"}
+    assert content[1] == {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/jpeg", "data": "/9j/4AAQSkZJRg=="},
+    }
 
 def test_request_assistant_tool_calls_and_tool_results():
     req = _build_openai_request(

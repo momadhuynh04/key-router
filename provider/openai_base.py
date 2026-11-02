@@ -5,6 +5,7 @@ from typing import AsyncIterator, Dict, Any, List
 from provider.base import BaseProvider
 from models.anthropic import AnthropicRequest, AnthropicResponse, AnthropicUsage
 from models.events import SSEEvent
+from proxy.image_utils import anthropic_block_to_image_url
 import uuid
 
 
@@ -20,6 +21,7 @@ def _anthropic_content_to_openai(role: str, content: Any) -> List[Dict[str, Any]
     messages = []
     text_parts: List[str] = []
     thinking_parts: List[str] = []
+    image_parts: List[Dict[str, Any]] = []
     tool_calls: List[Dict[str, Any]] = []
 
     for block in content:
@@ -27,6 +29,10 @@ def _anthropic_content_to_openai(role: str, content: Any) -> List[Dict[str, Any]
 
         if block_type == "text":
             text_parts.append(block.get("text", ""))
+        elif block_type == "image":
+            url = anthropic_block_to_image_url(block)
+            if url:
+                image_parts.append({"type": "image_url", "image_url": {"url": url}})
         elif block_type == "thinking":
             thinking_parts.append(block.get("thinking", block.get("text", "")))
 
@@ -65,9 +71,16 @@ def _anthropic_content_to_openai(role: str, content: Any) -> List[Dict[str, Any]
         if tool_calls:
             msg["tool_calls"] = tool_calls
         messages.insert(0, msg)
-    elif role == "user" and (text_parts or thinking_parts):
+    elif role == "user" and (text_parts or thinking_parts or image_parts):
         content = "\n".join(text_parts or thinking_parts)
-        messages.insert(0, {"role": "user", "content": content})
+        if image_parts:
+            parts: List[Dict[str, Any]] = []
+            if content:
+                parts.append({"type": "text", "text": content})
+            parts.extend(image_parts)
+            messages.insert(0, {"role": "user", "content": parts})
+        else:
+            messages.insert(0, {"role": "user", "content": content})
 
     return messages
 

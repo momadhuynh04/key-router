@@ -2,7 +2,10 @@ import { useState, useEffect, useRef } from 'react'
 import CustomProviderModal from './CustomProviderModal'
 import AgentModal from './AgentModal'
 import BridgePanel, { type BridgeSettings } from './BridgePanel'
+import SkillsPanel from './SkillsPanel'
 import type { Agent } from './AgentModal'
+
+const FAMILY_KEYS = ['claude', 'codex']
 
 function SearchableDropdown({ options, value, onChange, placeholder }: { options: string[], value: string, onChange: (val: string) => void, placeholder: string }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -84,7 +87,7 @@ function NavButton({ active, onClick, icon, label }: { active: boolean; onClick:
 function App() {
   const [activeTab, setActiveTab] = useState<'routing' | 'launcher' | 'agents'>('routing');
   const [mappings, setMappings] = useState<Record<string, string>>({});
-  const [sourceModel, setSourceModel] = useState("opus");
+  const [sourceModel, setSourceModel] = useState("claude");
   const [provider, setProvider] = useState("openrouter");
   const [targetModel, setTargetModel] = useState("");
   const [launchTarget, setLaunchTarget] = useState<string>('terminal');
@@ -104,6 +107,13 @@ function App() {
   const [bridgeRunning, setBridgeRunning] = useState(false);
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+
+  const overrideKeys = Object.keys(mappings).filter(k => !FAMILY_KEYS.includes(k));
+  useEffect(() => {
+    if (!FAMILY_KEYS.includes(sourceModel) && !(sourceModel in mappings)) {
+      setSourceModel('claude');
+    }
+  }, [mappings, sourceModel]);
 
   const fetchMappings = () => {
     fetch('/api/models').then(r => r.json()).then(d => setMappings(d.mappings || {}));
@@ -232,10 +242,11 @@ function App() {
                   <div>
                     <label className="block text-[11px] font-medium tracking-widest uppercase text-text-secondary mb-1.5">Source model</label>
                     <select value={sourceModel} onChange={e => setSourceModel(e.target.value)} className="w-full h-9 rounded-lg bg-surface-900 border border-border px-3 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand">
-                      <option value="opus">OPUS</option>
-                      <option value="sonnet">SONNET</option>
-                      <option value="haiku">HAIKU</option>
-                      <option value="codex">CODEX</option>
+                      <option value="claude">CLAUDE — ALL MODELS</option>
+                      <option value="codex">CODEX — ALL MODELS</option>
+                      {overrideKeys.map(key => (
+                        <option key={key} value={key}>{key.toUpperCase()}</option>
+                      ))}
                     </select>
                   </div>
                   <div>
@@ -258,12 +269,18 @@ function App() {
                   </div>
                   <button onClick={addMapping} disabled={!targetModel} className="h-9 rounded-full bg-brand text-white hover:bg-brand-muted disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium px-6 transition-colors">Save route</button>
                 </div>
+                <p className="text-xs text-text-muted mt-3">
+                  {sourceModel === 'claude' || sourceModel === 'codex'
+                    ? `One route covers every ${sourceModel === 'claude' ? 'Claude' : 'Codex'} model, so upstream renames (opus/sonnet/haiku, gpt-5.x…) keep working without edits.`
+                    : 'Explicit override — applies to this source key only; the family route still covers everything else.'}
+                </p>
               </div>
             </div>
           )}
 
           {/* LAUNCHER */}
           {activeTab === 'launcher' && (
+            <div className="space-y-6">
             <div className="rounded-2xl border border-border bg-surface-900 p-5 lg:p-6">
               <h2 className="text-[13px] font-semibold tracking-widest uppercase text-text-secondary mb-2">Agent launcher</h2>
               <p className="text-sm text-text-secondary leading-relaxed max-w-2xl mb-5">
@@ -311,6 +328,8 @@ function App() {
                   {isLaunching ? <><span className="w-2 h-2 rounded-full bg-white animate-pulse" /> Launching…</> : <>{launchTarget === 'codex' ? 'Launch Codex' : launchTarget === 'terminal' ? 'Launch Claude Code' : `Launch in ${ideList[launchTarget]?.name || 'IDE'}`} <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg></>}
                 </button>
               </div>
+            </div>
+            <SkillsPanel projectPath={launchMode === 'local' ? localPath : ''} />
             </div>
           )}
 

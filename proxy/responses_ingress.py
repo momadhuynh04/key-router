@@ -21,6 +21,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
 from models.anthropic import AnthropicRequest, AnthropicResponse, Message
 from models.events import SSEEvent
 from models.openai_compat import ResponsesRequest
+from proxy.image_utils import image_url_to_anthropic_block
 
 _TEXT_PART_TYPES = {"input_text", "output_text", "summary_text", "text"}
 
@@ -170,19 +171,53 @@ def _extract_text_tool_calls(
     return calls
 
 
+def _parts_to_blocks(content: Any) -> List[Dict[str, Any]]:
+    """Convert Responses content (string or typed parts) to Anthropic blocks.
+
+    Text parts become text blocks and `input_image` parts become image blocks,
+    so pasted images survive the hop into the provider adapters.
+    """
+    if content is None:
+        return []
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}] if content else []
+    if not isinstance(content, list):
+        return [{"type": "text", "text": str(content)}]
+
+    blocks: List[Dict[str, Any]] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        part_type = part.get("type")
+        if part_type in _TEXT_PART_TYPES:
+            text = part.get("text", "")
+            if text:
+                blocks.append({"type": "text", "text": text})
+        elif part_type in ("input_image", "image_url"):
+            image_block = image_url_to_anthropic_block(
+                part.get("image_url") or part.get("url") or part.get("file_id")
+            )
+            if image_block:
+                blocks.append(image_block)
+        elif part_type == "image":
+            if isinstance(part.get("source"), dict):
+                blocks.append(part)
+            else:
+                image_block = image_url_to_anthropic_block(
+                    part.get("image_url") or part.get("url")
+                )
+                if image_block:
+                    blocks.append(image_block)
+    return blocks
+
+
 def _parts_to_text(content: Any) -> str:
     """Flatten Responses content (string or list of typed parts) to plain text."""
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for part in content:
-            if isinstance(part, dict) and part.get("type") in _TEXT_PART_TYPES:
-                parts.append(part.get("text", ""))
-        return "\n".join(parts)
-    return str(content)
+    return "\n".join(
+        block.get("text", "")
+        for block in _parts_to_blocks(content)
+        if block.get("type") == "text"
+    )
 
 
 def _strip_toolu(tool_id: str) -> str:
@@ -262,9 +297,20 @@ def responses_to_anthropic(req: ResponsesRequest) -> AnthropicRequest:
         if text:
             system_parts.append(text)
 
-    def add_user(text: str):
-        if text:
-            messages.append(Message(role="user", content=text))
+    def add_user(content: Any):
+        if isinstance(content, str):
+            if content:
+                messages.append(Message(role="user", content=content))
+            return
+        blocks = _parts_to_blocks(content)
+        if not blocks:
+            return
+        if all(block.get("type") == "text" for block in blocks):
+            text = "\n".join(block.get("text", "") for block in blocks)
+            if text:
+                messages.append(Message(role="user", content=text))
+            return
+        messages.append(Message(role="user", content=blocks))
 
     def add_assistant(text: str):
         blocks = [{"type": "text", "text": text}] if text else [{"type": "text", "text": ""}]
@@ -290,13 +336,12 @@ def responses_to_anthropic(req: ResponsesRequest) -> AnthropicRequest:
 
             if item_type == "message":
                 role = item.get("role", "user")
-                text = _parts_to_text(item.get("content"))
                 if role in ("system", "developer"):
-                    add_system(text)
+                    add_system(_parts_to_text(item.get("content")))
                 elif role == "assistant":
-                    add_assistant(text)
+                    add_assistant(_parts_to_text(item.get("content")))
                 else:
-                    add_user(text)
+                    add_user(item.get("content"))
 
             elif item_type == "function_call":
                 thinking_blocks = []

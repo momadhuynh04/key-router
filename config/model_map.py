@@ -3,6 +3,13 @@ import os
 import re
 from typing import Dict, Tuple
 
+CLAUDE_FAMILY_KEY = "claude"
+
+# Legacy per-tier keys, in priority order used when consolidating them into the
+# single 'claude' route. 'sonnet' first because it is Claude Code's default.
+LEGACY_CLAUDE_TIER_KEYS = ("sonnet", "opus", "haiku", "fable")
+
+
 class ModelMapper:
     def __init__(self, config_path: str = None):
         if config_path is None:
@@ -17,7 +24,24 @@ class ModelMapper:
             with open(self.config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 self.mappings = data.get("model_mappings", {})
-                
+        self._consolidate_claude_routes()
+
+    def _consolidate_claude_routes(self):
+        """Collapse legacy per-tier keys (opus/sonnet/haiku) into one 'claude' key."""
+        if CLAUDE_FAMILY_KEY in self.mappings:
+            return
+        legacy = [key for key in LEGACY_CLAUDE_TIER_KEYS if key in self.mappings]
+        if not legacy:
+            return
+        source = legacy[0]
+        target = self.mappings[source]
+        self.mappings[CLAUDE_FAMILY_KEY] = target
+        for key in legacy:
+            del self.mappings[key]
+        print(f"[⚡] Consolidated Claude routes {legacy} → "
+              f"'{CLAUDE_FAMILY_KEY}' = '{target}'")
+        self.save_mappings()
+
     def save_mappings(self):
         data = {}
         if os.path.exists(self.config_path):
@@ -38,17 +62,20 @@ class ModelMapper:
     def get_all(self) -> Dict[str, str]:
         return self.mappings
                 
-    # Keyword tiers to match against — order matters (most specific first).
-    # Claude Code requests contain opus/sonnet/haiku. OpenAI-family models
+    # Keyword tiers to match against — legacy per-tier keys still win when
+    # present, so existing configs keep working. OpenAI-family models
     # (gpt-*/codex/o3/o4) are NOT tier-matched on purpose: they resolve via
     # FAMILY_FALLBACKS so one 'codex' key covers the whole family, and only
     # an exact per-model key (e.g. 'gpt-5.5') overrides a single model.
-    KEYWORD_TIERS = ["opus", "sonnet", "haiku"]
+    KEYWORD_TIERS = ["opus", "sonnet", "haiku", "fable"]
 
     # Family fallback: ANY model from these families routes through a single
-    # canonical key, so Codex switching models (gpt-5.6-sol, gpt-5.5, o4-mini…)
-    # never breaks routing — one 'codex' mapping covers the whole family.
+    # canonical key, so clients switching models (Claude Code: opus/sonnet/
+    # haiku/claude-*, Codex: gpt-5.6-sol/gpt-5.5/o4-mini…) never break routing
+    # when upstream renames models — one 'claude' and one 'codex' key cover
+    # each whole family.
     FAMILY_FALLBACKS = [
+        (r"claude|anthropic|\b(opus|sonnet|haiku|fable)\b", CLAUDE_FAMILY_KEY),
         (r"\b(gpt|codex|o[134])\b", "codex"),
     ]
 
@@ -59,8 +86,9 @@ class ModelMapper:
           1. Exact match against mapping keys.
           2. Keyword match: if requested model contains 'opus'/'sonnet'/'haiku',
              scan existing mapping keys for the same keyword and use that value.
-          3. Family fallback: OpenAI-family models (gpt-*/codex/o3/o4) route
-             through the single 'codex' mapping key.
+          3. Family fallback: Claude models (claude-*, opus/sonnet/haiku/fable)
+             route through the single 'claude' key, and OpenAI-family models
+             (gpt-*/codex/o3/o4) through the single 'codex' key.
           4. Raise ValueError with a helpful message.
         """
         # 1. Exact match

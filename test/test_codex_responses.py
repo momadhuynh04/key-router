@@ -53,6 +53,38 @@ def test_request_string_input():
     assert result.messages == [dict(role="user", content="Just say hi")] or \
            (len(result.messages) == 1 and result.messages[0].content == "Just say hi")
 
+def test_request_input_image_data_url_preserved():
+    req = _build_request(input=[{
+        "type": "message", "role": "user",
+        "content": [
+            {"type": "input_text", "text": "What is in this image?"},
+            {"type": "input_image",
+             "image_url": "data:image/png;base64,iVBORw0KGgoAAAANS",
+             "detail": "auto"},
+        ],
+    }])
+    result = responses_to_anthropic(req)
+    content = result.messages[0].content
+    assert isinstance(content, list)
+    assert content[0] == {"type": "text", "text": "What is in this image?"}
+    assert content[1] == {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgoAAAANS"},
+    }
+
+def test_request_input_image_url_preserved():
+    req = _build_request(input=[{
+        "type": "message", "role": "user",
+        "content": [
+            {"type": "input_image", "image_url": "https://example.com/screenshot.png"},
+        ],
+    }])
+    result = responses_to_anthropic(req)
+    assert result.messages[0].content == [{
+        "type": "image",
+        "source": {"type": "url", "url": "https://example.com/screenshot.png"},
+    }]
+
 def test_request_function_call_roundtrip_items():
     req = _build_request(
         tools=[{

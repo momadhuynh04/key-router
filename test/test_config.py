@@ -87,3 +87,75 @@ def test_model_mapper_family_fallback_requires_codex_key(temp_config):
 
     with pytest.raises(ValueError, match="No mapping found"):
         mapper.resolve("gpt-5.6-sol")
+
+def test_model_mapper_family_fallback_claude_models(temp_config):
+    """Every Claude Code model routes through the single 'claude' key."""
+    mapper = ModelMapper(config_path=temp_config)
+    mapper.set_mapping("claude", "openrouter/anthropic/claude-sonnet-4-5")
+
+    for model in [
+        "claude-sonnet-4-5-20250929",
+        "claude-opus-4-1-20250805",
+        "claude-3-5-haiku-20241022",
+        "claude-5-fable-preview",
+        "sonnet", "opus", "haiku", "fable",
+    ]:
+        provider, target = mapper.resolve(model)
+        assert (provider, target) == ("openrouter", "anthropic/claude-sonnet-4-5"), model
+
+def test_model_mapper_claude_family_exact_match_wins(temp_config):
+    """An explicit per-model key still overrides the family route."""
+    mapper = ModelMapper(config_path=temp_config)
+    mapper.set_mapping("claude", "openrouter/anthropic/claude-sonnet-4-5")
+    mapper.set_mapping("claude-opus-4-1-20250805", "openrouter/anthropic/claude-opus-4-1")
+
+    provider, target = mapper.resolve("claude-opus-4-1-20250805")
+    assert (provider, target) == ("openrouter", "anthropic/claude-opus-4-1")
+
+    provider, target = mapper.resolve("claude-4-5-haiku")
+    assert (provider, target) == ("openrouter", "anthropic/claude-sonnet-4-5")
+
+def test_model_mapper_legacy_tier_keys_still_win(temp_config):
+    """Existing opus/sonnet/haiku keys keep working alongside 'claude'."""
+    mapper = ModelMapper(config_path=temp_config)
+    mapper.set_mapping("claude", "openrouter/anthropic/claude-sonnet-4-5")
+    mapper.set_mapping("opus", "openrouter/anthropic/claude-opus-4-1")
+
+    provider, target = mapper.resolve("claude-opus-4-1")
+    assert (provider, target) == ("openrouter", "anthropic/claude-opus-4-1")
+
+def test_model_mapper_consolidates_legacy_claude_tiers(temp_config):
+    """On load, per-tier keys collapse into one 'claude' key (sonnet preferred)."""
+    with open(temp_config, "w", encoding="utf-8") as f:
+        json.dump({"model_mappings": {
+            "opus": "openrouter/anthropic/claude-opus-4-1",
+            "sonnet": "openrouter/anthropic/claude-sonnet-4-5",
+            "haiku": "openrouter/anthropic/claude-haiku-4-5",
+            "codex": "deepseekplatform/deepseek-v4-flash",
+        }}, f)
+
+    mapper = ModelMapper(config_path=temp_config)
+    assert mapper.get_all() == {
+        "claude": "openrouter/anthropic/claude-sonnet-4-5",
+        "codex": "deepseekplatform/deepseek-v4-flash",
+    }
+
+    with open(temp_config, "r", encoding="utf-8") as f:
+        saved = json.load(f)["model_mappings"]
+    assert saved == mapper.get_all()
+
+def test_model_mapper_consolidation_keeps_existing_claude_route(temp_config):
+    """An already-configured 'claude' key is never overwritten by legacy tiers."""
+    with open(temp_config, "w", encoding="utf-8") as f:
+        json.dump({"model_mappings": {
+            "claude": "openrouter/anthropic/claude-opus-4-1",
+            "sonnet": "openrouter/anthropic/claude-sonnet-4-5",
+        }}, f)
+
+    mapper = ModelMapper(config_path=temp_config)
+    assert mapper.get_all() == {
+        "claude": "openrouter/anthropic/claude-opus-4-1",
+        "sonnet": "openrouter/anthropic/claude-sonnet-4-5",
+    }
+    provider, target = mapper.resolve("claude-sonnet-4-5")
+    assert (provider, target) == ("openrouter", "anthropic/claude-sonnet-4-5")

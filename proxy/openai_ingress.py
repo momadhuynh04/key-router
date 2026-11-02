@@ -18,25 +18,51 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from models.anthropic import AnthropicRequest, AnthropicResponse, Message
 from models.events import SSEEvent
 from models.openai_compat import OpenAIRequest
+from proxy.image_utils import image_url_to_anthropic_block
 
 
 # ---------------------------------------------------------------------------
 # Request translation: OpenAI Chat Completions → Anthropic Messages
 # ---------------------------------------------------------------------------
 
+def _content_to_blocks(content: Any) -> List[Dict[str, Any]]:
+    """Convert OpenAI content (string or parts) to Anthropic blocks.
+
+    `image_url` parts become image blocks so images pasted into OpenAI-native
+    clients survive translation into the provider pipeline.
+    """
+    if content is None:
+        return []
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}] if content else []
+    if not isinstance(content, list):
+        return [{"type": "text", "text": str(content)}]
+
+    blocks: List[Dict[str, Any]] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        part_type = part.get("type")
+        if part_type in ("text", "input_text"):
+            text = part.get("text", "")
+            if text:
+                blocks.append({"type": "text", "text": text})
+        elif part_type in ("image_url", "input_image"):
+            image_block = image_url_to_anthropic_block(
+                part.get("image_url") or part.get("url")
+            )
+            if image_block:
+                blocks.append(image_block)
+    return blocks
+
+
 def _content_to_text(content: Any) -> str:
     """Flatten OpenAI message content (string or content-part array) to text."""
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for part in content:
-            if isinstance(part, dict) and part.get("type") == "text":
-                parts.append(part.get("text", ""))
-        return "\n".join(parts)
-    return str(content)
+    return "\n".join(
+        block.get("text", "")
+        for block in _content_to_blocks(content)
+        if block.get("type") == "text"
+    )
 
 
 def _safe_json_loads(raw: Any) -> Dict[str, Any]:
@@ -117,7 +143,11 @@ def openai_chat_to_anthropic(req: OpenAIRequest) -> AnthropicRequest:
             }]))
 
         else:  # user
-            messages.append(Message(role="user", content=text))
+            blocks = _content_to_blocks(msg.content)
+            if any(block.get("type") == "image" for block in blocks):
+                messages.append(Message(role="user", content=blocks))
+            elif text:
+                messages.append(Message(role="user", content=text))
 
     max_tokens = req.max_tokens or getattr(req, "max_completion_tokens", None)
 

@@ -7,7 +7,7 @@
     <img src="https://img.shields.io/badge/Python-3.11+-blue.svg" alt="Python 3.11+">
     <img src="https://img.shields.io/badge/Framework-FastAPI-009688.svg" alt="FastAPI">
     <img src="https://img.shields.io/badge/Frontend-React%20%2B%20Tailwind-61DAFB.svg" alt="React">
-    <img src="https://img.shields.io/badge/Testing-PyTest%20218%20tests-brightgreen.svg" alt="218 tests">
+    <img src="https://img.shields.io/badge/Testing-PyTest%20262%20tests-brightgreen.svg" alt="262 tests">
     <img src="https://img.shields.io/badge/Streaming-SSE-orange.svg" alt="SSE">
     <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-0078D6.svg" alt="Platform">
     <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
@@ -47,6 +47,8 @@
 | **Multi-provider routing** | OpenRouter, DeepSeek (V3/V4 thinking), Google AI Studio, or any OpenAI/Anthropic endpoint. Ingress-aware: Claude → Anthropic, Codex → OpenAI passthrough. |
 | **Thinking mode fixes** | DeepSeek V4 `reasoning_content` echo ([litellm#26395](https://github.com/BerriAI/litellm/issues/26395), [api-docs.deepseek.com/guides/thinking_mode](https://api-docs.deepseek.com/guides/thinking_mode/)) + Gemini `thoughtSignature` ([opencode#347](https://github.com/Gitlawb/openclaude/issues/347)). Multi-turn tool calls no longer 400. |
 | **Full SSE streaming** | Token-by-token with Anthropic ↔ OpenAI translation and Responses typed events + agentic retry. |
+| **Vision passthrough** | Pasted images from Codex (`input_image` → `image_url` data URLs) and Claude Code (`image` blocks) survive translation: base64/URL blocks for OpenAI-compatible providers, `inlineData` for Gemini. |
+| **Skills manager** | Launcher → Skills: Installed/Browse, Claude Code/Codex split, global/project scope, real enable/disable, SKILL.md preview, install from skills.sh or a repo via `npx skills`. |
 | **Custom providers** | Any OpenAI/Anthropic API via WebUI or `python -m cli add-provider`. Keys by ENV name (`MY_API_KEY`), never raw. |
 | **IDE auto-detect & launch** | VS Code, VSCodium, Cursor — sets `~/.claude/settings.json`, `~/.codex/config.toml`, `disableLoginPrompt`. |
 | **WebUI** | React + Tailwind dashboard for routing, provider CRUD, IDE detection and launch. |
@@ -59,7 +61,7 @@
 
 ### Prerequisites
 
-- **Python 3.11+** · **Node.js 18+**
+- **Python 3.11+** · **Node.js 18+** (Skills marketplace installs need **Node 22.20+**)
 - API key for at least one provider: [OpenRouter](https://openrouter.ai/keys) · [DeepSeek](https://platform.deepseek.com/api_keys) · [Google AI Studio](https://aistudio.google.com)
 
 > For the Claude Code VS Code extension, first install the CLI:
@@ -227,6 +229,31 @@ Tool calls, permission denials, cost and duration are rendered inline in the rep
 `auto`, `ci` (`dontAsk`), `bypass` (only when `allow_bypass` is on; containers/VMs only). Headless runs
 have no interactive prompt: anything that would ask is **denied instead**, and the denial is shown in the chat.
 
+### 5. Manage skills
+
+**Launcher → Skills** (no separate tab): choose **Claude Code** or **Codex**, then **Global** or
+**Project**, and use **Installed** / **Browse**.
+
+| Provider | Global | Project |
+| -------- | ------ | ------- |
+| Claude Code | `~/.claude/skills/<id>/SKILL.md` | `<project>/.claude/skills/<id>/SKILL.md` |
+| Codex | `~/.agents/skills/<id>/SKILL.md` (+ `~/.codex/skills`) | `<project>/.agents/skills/<id>/SKILL.md` |
+
+- **Browse** searches the public `skills.sh` index. **Install** writes to one or both providers in one
+  step, using the official `npx skills ... --copy` flow.
+- **Installed** shows user/project skills plus read-only system/plugin skills. Expand a row to preview
+  `SKILL.md`; toggle to move the skill to `<root>/.disabled/` (the CLIs stop discovering it).
+- Project scope is fenced by `allowed_roots` from `agents.json`; add the project root in the **Agents**
+  tab first. Global scope writes only to the known provider roots above.
+- Marketplace installs require **Node 22.20+** and `npx`. key-router copies files and **never executes**
+  a skill; skills are third-party instructions/scripts with the agent's permissions — review before use.
+- `npx skills` telemetry is disabled for installs; the CLI version is pinned to `skills@1.7.0`
+  (override with `KEY_ROUTER_SKILLS_CLI`).
+
+API: `GET /api/skills`, `GET /api/skills/marketplace`, `POST /api/skills/install`,
+`POST /api/skills/toggle`, `DELETE /api/skills/{provider}/{scope}/{id}`,
+`GET /api/skills/content`.
+
 ---
 
 ## Configuration
@@ -245,11 +272,18 @@ have no interactive prompt: anything that would ask is **denied instead**, and t
 ```json
 {
   "model_mappings": {
-    "opus": "openrouter/anthropic/claude-opus-4",
+    "claude": "openrouter/anthropic/claude-sonnet-4-5",
     "codex": "deepseekplatform/deepseek-v4-flash"
   }
 }
 ```
+
+`claude` and `codex` are **family routes**: one key covers every model from that
+family, so upstream renames (`opus`/`sonnet`/`haiku`/`fable`, `gpt-5.x`/`codex`/
+`o4`…) keep working without editing config. Legacy per-tier keys (`opus`,
+`sonnet`, `haiku`) still work as overrides and are merged into `claude`
+automatically when the proxy starts (Sonnet's route is kept). An exact model key
+(e.g. `claude-opus-4-1-20250805`) overrides the family route for that model only.
 
 **agents.json** (via WebUI → Agents tab; `cp agents.example.json agents.json` to start from a template):
 
@@ -352,11 +386,11 @@ key-router/
 ├── proxy/            app, server, routers, ingress, errors, retry
 ├── provider/         base, openai_base, openrouter, deepseekplatform, googleaistudio, custom
 ├── models/           anthropic, openai_compat, events
-├── config/           settings, model_map, codex_config, custom_providers
+├── config/           settings, model_map, codex_config, custom_providers, skills
 ├── bridge/           agent-bridge: OpenAI-compatible front for Claude Code / Codex
-├── webui/            React + Tailwind (App.tsx, AgentModal.tsx, BridgePanel.tsx)
+├── webui/            React + Tailwind (App.tsx, AgentModal.tsx, BridgePanel.tsx, SkillsPanel.tsx)
 ├── cli/              typer CLI (serve, add/list/remove provider)
-├── test/             218 tests
+├── test/             262 tests
 └── start.sh / dev.sh
 ```
 
@@ -436,6 +470,8 @@ Open WebUI chỉ thấy **đúng một model** `key-router-agents`. Chọn agent
 | text thường | Gửi tới agent đang gắn (tự `/start default_agent` nếu chưa gắn) |
 
 Tool call, danh sách bị chặn quyền, cost và thời gian đều hiện ngay trong câu trả lời. Quyền đặt theo từng agent: `plan` (chỉ đọc), `edit` (sửa trong workdir), `auto`, `ci`, `bypass` (chỉ khi bật `allow_bypass`). Chạy headless không có prompt tương tác — thứ gì cần hỏi thì **bị từ chối luôn** và hiện lý do trong chat.
+
+**Quản lý skills:** tab **Launcher → Skills** (không thêm tab mới). Chọn **Claude Code** hoặc **Codex**, phạm vi **Global** / **Project**, rồi **Installed** hoặc **Browse**. Browse tìm trên marketplace skills.sh; Install có thể ghi cho cả 2 provider bằng `npx skills --copy`. Project scope chỉ cho phép trong `allowed_roots` (thêm root ở tab Agents trước). Nút toggle chuyển skill vào `<root>/.disabled/` để CLI thật sự không thấy; skill hệ thống/plugin/symlink là read-only. Cài marketplace cần **Node 22.20+** và `npx`; key-router chỉ copy file, **không chạy** skill — chỉ cài nguồn tin cậy.
 
 **Gặp lỗi:** IDE không hiện → chạy `detect-ide.bat` / `./detect-ide.sh`, kiểm tra `where code` / `which code` có trong PATH không.
 

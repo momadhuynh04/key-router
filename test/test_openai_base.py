@@ -17,6 +17,22 @@ def test_anthropic_content_to_openai_text():
     result = _anthropic_content_to_openai("user", content)
     assert result == [{"role": "user", "content": "Hello world"}]
 
+def test_anthropic_content_to_openai_image():
+    content = [
+        {"type": "text", "text": "Describe this"},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "abc123"}},
+        {"type": "image", "source": {"type": "url", "url": "https://example.com/a.png"}},
+    ]
+    result = _anthropic_content_to_openai("user", content)
+    assert result == [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "Describe this"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,abc123"}},
+            {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
+        ],
+    }]
+
 def test_anthropic_content_to_openai_tool_use():
     content = [{
         "type": "tool_use",

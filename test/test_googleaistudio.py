@@ -44,6 +44,22 @@ async def test_translate_request_merges_same_role():
 
 
 @pytest.mark.asyncio
+async def test_translate_request_image_part():
+    p = GoogleAIStudioProvider(target_model="gemini-2.0-flash")
+    req = AnthropicRequest(
+        model="m",
+        messages=[Message(role="user", content=[
+            {"type": "text", "text": "What is this?"},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "abc123"}},
+        ])],
+    )
+    body = await p.translate_request(req)
+    parts = body["contents"][0]["parts"]
+    assert {"text": "What is this?"} in parts
+    assert {"inlineData": {"mimeType": "image/png", "data": "abc123"}} in parts
+
+
+@pytest.mark.asyncio
 async def test_translate_response_text():
     p = GoogleAIStudioProvider(target_model="gemini-2.0-flash")
     data = {

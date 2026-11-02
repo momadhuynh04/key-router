@@ -34,9 +34,12 @@ const TOOLS = [
   { value: 'full', label: 'full — CLI default (all built-in tools)' },
 ]
 
-// The `codex` mapping key belongs to the Codex CLI ingress (family fallback in
-// config/model_map.py). A Claude Code agent never sends it, so it is hidden here.
-const CODEX_MAPPING_KEY = 'codex'
+// Family keys route every model of an ingress through one route. They are not
+// valid `--model` values, so they are hidden from the agent model picker —
+// instead a Claude agent picks a real alias (opus/sonnet/haiku) that the
+// `claude` family route resolves in config/model_map.py.
+const FAMILY_MAPPING_KEYS = new Set(['claude', 'codex'])
+const CLAUDE_ALIASES = ['opus', 'sonnet', 'haiku']
 
 const inputCls = "w-full h-9 rounded-lg bg-surface-850 border border-border px-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand"
 const areaCls = "w-full rounded-lg bg-surface-900 border border-border px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand"
@@ -93,8 +96,12 @@ export default function AgentModal({ agent, existingIds, allowedRoots, modelMapp
   const idTaken = existingIds.includes(form.id) && form.id !== agent?.id
   const canSubmit = idValid && !idTaken && form.workdir.trim().length > 0 && !submitting
 
-  const mappingKeys = Object.keys(modelMappings).filter(k => k !== CODEX_MAPPING_KEY)
-  const modelIsMapping = mappingKeys.includes(form.model)
+  const tierKeys = Object.keys(modelMappings).filter(k => !FAMILY_MAPPING_KEYS.has(k))
+  const claudeAliases = modelMappings.claude
+    ? CLAUDE_ALIASES.filter(alias => !tierKeys.includes(alias))
+    : []
+  const modelOptions = [...tierKeys, ...claudeAliases]
+  const modelIsOption = modelOptions.includes(form.model)
 
   const checkPath = async (path: string) => {
     if (!path.trim()) { setPathCheck(null); return }
@@ -181,20 +188,23 @@ export default function AgentModal({ agent, existingIds, allowedRoots, modelMapp
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Model</label>
-              {mappingKeys.length > 0 ? (
-                <select value={modelIsMapping ? form.model : ''} onChange={e => set('model', e.target.value)} className={inputCls}>
-                  {!modelIsMapping && (
+              {modelOptions.length > 0 ? (
+                <select value={modelIsOption ? form.model : ''} onChange={e => set('model', e.target.value)} className={inputCls}>
+                  {!modelIsOption && (
                     <option value="">{form.model ? `${form.model} (not in routing)` : 'Select a model…'}</option>
                   )}
-                  {mappingKeys.map(key => (
+                  {tierKeys.map(key => (
                     <option key={key} value={key}>{titleCase(key)} ({modelMappings[key]})</option>
+                  ))}
+                  {claudeAliases.map(alias => (
+                    <option key={alias} value={alias}>{titleCase(alias)} (Claude route)</option>
                   ))}
                 </select>
               ) : (
                 <input value={form.model} onChange={e => set('model', e.target.value)} placeholder="opus" className={inputCls} />
               )}
               <p className={hintCls}>
-                {mappingKeys.length > 0
+                {modelOptions.length > 0
                   ? 'From Model routing — the alias resolves through key-router.'
                   : 'No routes yet. Add one in Model routing first.'}
               </p>

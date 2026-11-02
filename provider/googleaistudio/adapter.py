@@ -6,6 +6,7 @@ from typing import AsyncIterator, Dict, Any, List, Optional
 from provider.base import BaseProvider
 from models.anthropic import AnthropicRequest, AnthropicResponse, AnthropicUsage
 from models.events import SSEEvent
+from proxy.image_utils import anthropic_block_to_gemini_part
 from config.settings import settings
 from config.logging import log_warn
 
@@ -121,6 +122,7 @@ class GoogleAIStudioProvider(BaseProvider):
                 continue
 
             text_parts: List[str] = []
+            image_parts: List[Dict[str, Any]] = []
             tool_calls: List[Dict[str, Any]] = []
             tool_results: List[Dict[str, Any]] = []
 
@@ -128,6 +130,10 @@ class GoogleAIStudioProvider(BaseProvider):
                 btype = block.get("type")
                 if btype == "text" and block.get("text"):
                     text_parts.append(block["text"])
+                elif btype == "image":
+                    part = anthropic_block_to_gemini_part(block)
+                    if part:
+                        image_parts.append(part)
                 elif btype == "tool_use":
                     tid = block.get("id", "")
                     if tid:
@@ -159,8 +165,12 @@ class GoogleAIStudioProvider(BaseProvider):
                 if parts:
                     contents.append({"role": "model", "parts": parts})
             elif role == "user":
+                user_parts: List[Dict[str, Any]] = []
                 if text_parts:
-                    contents.append({"role": "user", "parts": [{"text": "\n".join(text_parts)}]})
+                    user_parts.append({"text": "\n".join(text_parts)})
+                user_parts.extend(image_parts)
+                if user_parts:
+                    contents.append({"role": "user", "parts": user_parts})
                 for tr in tool_results:
                     tid = tr.get("tool_use_id", "")
                     name = tool_id_to_name.get(tid, "") or tool_id_to_name.get(_strip_toolu(tid), "") or "unknown"
