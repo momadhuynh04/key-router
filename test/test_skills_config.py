@@ -197,11 +197,12 @@ def test_project_path_requires_roots(allowed, monkeypatch):
         skills.resolve_project_path(str(project))
 
 
-def test_parse_source_and_skill():
+def test_parse_source_and_skill(tmp_path):
     assert skills.parse_source_and_skill("owner/repo@my-skill") == ("owner/repo", "my-skill")
     assert skills.parse_source_and_skill("git@github.com:owner/repo.git") == ("git@github.com:owner/repo.git", "")
     assert skills.parse_source_and_skill("https://github.com/o/r@v1") == ("https://github.com/o/r@v1", "")
-    assert skills.parse_source_and_skill("/tmp/local-skills@v1") == ("/tmp/local-skills@v1", "")
+    local = str(tmp_path / "local-skills@v1")
+    assert skills.parse_source_and_skill(local) == (local, "")
 
 
 def test_validate_source_and_skill(allowed):
