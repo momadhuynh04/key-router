@@ -81,14 +81,17 @@ function SearchableDropdown({ options, value, onChange, placeholder }: { options
   );
 }
 
-function NavButton({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
+function NavButton({ active, onClick, icon, label, collapsed }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; collapsed: boolean }) {
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${active ? 'bg-white text-surface-950 shadow-sm' : 'text-text-muted hover:bg-white/[0.06] hover:text-text-secondary'}`}
+      title={collapsed ? label : undefined}
+      aria-label={label}
+      aria-current={active ? 'page' : undefined}
+      className={`flex items-center rounded-xl text-sm font-medium transition-colors ${collapsed ? 'h-11 w-11 justify-center' : 'w-full gap-3 px-3 py-2.5'} ${active ? 'bg-white text-surface-950 shadow-sm' : 'text-text-muted hover:bg-white/[0.06] hover:text-text-secondary'}`}
     >
-      {icon}
-      {label}
+      <span className="shrink-0">{icon}</span>
+      {!collapsed && <span className="truncate">{label}</span>}
     </button>
   )
 }
@@ -116,6 +119,8 @@ function App() {
   const [bridgeRunning, setBridgeRunning] = useState(false);
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [recentDirs, setRecentDirs] = useState<string[]>([]);
 
   const overrideKeys = Object.keys(mappings).filter(k => !FAMILY_KEYS.includes(k));
   useEffect(() => {
@@ -128,6 +133,10 @@ function App() {
     fetch('/api/models').then(r => r.json()).then(d => setMappings(d.mappings || {}));
   }
   useEffect(() => { fetchMappings(); }, []);
+  const fetchRecentDirs = () => {
+    fetch('/api/recent-dirs').then(r => r.json()).then(d => setRecentDirs(d.dirs || [])).catch(() => {});
+  }
+  useEffect(() => { fetchRecentDirs(); }, []);
   useEffect(() => {
     fetch('/api/ide-detect').then(r => r.json()).then(d => setIdeList(d.detected || {})).catch(() => {});
     fetch('/api/codex-detect').then(r => r.json()).then(d => setCodexInfo(d.detected?.binary ? d.detected : null)).catch(() => {});
@@ -176,6 +185,7 @@ function App() {
         await fetch('/api/ide-launch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ editor: launchTarget, path: localPath || null }) });
       } catch (e) { console.error(e); }
     }
+    fetchRecentDirs();
     setTimeout(() => setIsLaunching(false), 1000);
   };
 
@@ -195,30 +205,67 @@ function App() {
 
   return (
     <div className="min-h-screen bg-surface-950 flex">
-      <aside className="w-[260px] shrink-0 flex flex-col border-r border-border bg-surface-900 sticky top-0 h-screen">
-        <div className="px-6 py-6">
-          <h1 className="text-xl font-semibold tracking-tight text-text-primary">key-router</h1>
-          <p className="text-[11px] tracking-widest uppercase text-text-muted mt-1">Universal proxy</p>
-          <div className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-surface-850 border border-border px-3 py-1 text-xs text-text-muted">
-            <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
-            proxy · :8082
-          </div>
-          <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-surface-850 border border-border px-3 py-1 text-xs text-text-muted">
-            <span className={`w-2 h-2 rounded-full ${bridgeRunning ? 'bg-success animate-pulse' : 'bg-text-muted'}`} />
-            bridge · :{agentSettings?.port ?? 8083}
-          </div>
+      <aside className={`${sidebarOpen ? 'w-[260px]' : 'w-[72px]'} shrink-0 flex flex-col overflow-hidden border-r border-border bg-surface-900 sticky top-0 h-screen transition-[width] duration-300 ease-in-out`}>
+        <div className={`flex pt-6 pb-4 ${sidebarOpen ? 'items-start justify-between gap-2 px-6' : 'justify-center px-3'}`}>
+          {sidebarOpen && (
+            <div className="min-w-0">
+              <h1 className="text-xl font-semibold tracking-tight text-text-primary whitespace-nowrap">key-router</h1>
+              <p className="text-[11px] tracking-widest uppercase text-text-muted mt-1 whitespace-nowrap">Universal proxy</p>
+            </div>
+          )}
+          <button
+            onClick={() => setSidebarOpen(v => !v)}
+            aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+            aria-expanded={sidebarOpen}
+            title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+            className="shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-white/[0.06] hover:text-text-secondary transition-colors"
+          >
+            <svg className={`h-4 w-4 transition-transform duration-300 ${sidebarOpen ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+            </svg>
+          </button>
         </div>
-        <nav className="px-3 py-2 space-y-1 flex-1">
-          <NavButton active={activeTab === 'routing'} onClick={() => setActiveTab('routing')} icon={routingIcon} label="Model routing" />
-          <NavButton active={activeTab === 'launcher'} onClick={() => setActiveTab('launcher')} icon={launcherIcon} label="Agent launcher" />
-          <NavButton active={activeTab === 'agents'} onClick={() => setActiveTab('agents')} icon={agentsIcon} label="Agents" />
+
+        {sidebarOpen ? (
+          <div className="px-6 pb-4 flex flex-col items-start gap-2">
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-surface-850 border border-border px-3 py-1 text-xs text-text-muted whitespace-nowrap">
+              <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
+              proxy · :8082
+            </div>
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-surface-850 border border-border px-3 py-1 text-xs text-text-muted whitespace-nowrap">
+              <span className={`w-2 h-2 rounded-full ${bridgeRunning ? 'bg-success animate-pulse' : 'bg-text-muted'}`} />
+              bridge · :{agentSettings?.port ?? 8083}
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-2 pb-4">
+            <span title="proxy · :8082" className="flex h-7 w-7 items-center justify-center rounded-full border border-border bg-surface-850">
+              <span className="h-2 w-2 rounded-full bg-success animate-pulse" />
+            </span>
+            <span title={`bridge · :${agentSettings?.port ?? 8083}`} className="flex h-7 w-7 items-center justify-center rounded-full border border-border bg-surface-850">
+              <span className={`h-2 w-2 rounded-full ${bridgeRunning ? 'bg-success animate-pulse' : 'bg-text-muted'}`} />
+            </span>
+          </div>
+        )}
+
+        <nav className={`flex flex-1 flex-col gap-1 py-2 ${sidebarOpen ? 'px-3' : 'items-center px-3'}`}>
+          <NavButton active={activeTab === 'routing'} onClick={() => setActiveTab('routing')} icon={routingIcon} label="Model routing" collapsed={!sidebarOpen} />
+          <NavButton active={activeTab === 'launcher'} onClick={() => setActiveTab('launcher')} icon={launcherIcon} label="Agent launcher" collapsed={!sidebarOpen} />
+          <NavButton active={activeTab === 'agents'} onClick={() => setActiveTab('agents')} icon={agentsIcon} label="Agents" collapsed={!sidebarOpen} />
         </nav>
-        <div className="px-4 py-4 border-t border-border">
-          <a href="https://github.com/momadhuynh04/key-router.git" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-xs text-text-muted hover:text-text-secondary transition-colors">
-            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-            momadhuynh04/key-router
+
+        <div className={`py-4 border-t border-border ${sidebarOpen ? 'px-4' : 'flex justify-center px-3'}`}>
+          <a
+            href="https://github.com/momadhuynh04/key-router.git"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="momadhuynh04/key-router"
+            className={`flex items-center gap-2 text-xs text-text-muted hover:text-text-secondary transition-colors ${sidebarOpen ? '' : 'h-9 w-9 justify-center rounded-lg hover:bg-white/[0.06]'}`}
+          >
+            <svg className="w-4 h-4 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+            {sidebarOpen && <span className="truncate">momadhuynh04/key-router</span>}
           </a>
-          <p className="text-[11px] text-text-muted mt-2">© {new Date().getFullYear()} HUYNHHOANG04</p>
+          {sidebarOpen && <p className="text-[11px] text-text-muted mt-2 whitespace-nowrap">© {new Date().getFullYear()} HUYNHHOANG04</p>}
         </div>
       </aside>
 
@@ -381,6 +428,28 @@ function App() {
                   </div>
                 ) : (
                   <div>
+                    {recentDirs.length > 0 && (
+                      <div className="mb-4">
+                        <p className="text-[11px] font-medium tracking-widest uppercase text-text-secondary mb-2">Recent folders</p>
+                        <div className="flex flex-wrap gap-2">
+                          {recentDirs.map(dir => {
+                            const selected = localPath === dir;
+                            return (
+                              <button
+                                key={dir}
+                                type="button"
+                                onClick={() => setLocalPath(dir)}
+                                title={dir}
+                                className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-mono transition-colors ${selected ? 'border-brand-border bg-brand-bg text-brand' : 'border-border bg-surface-900 text-text-muted hover:bg-surface-800 hover:text-text-secondary'}`}
+                              >
+                                <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75} aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>
+                                <span className="max-w-[280px] truncate">{dir}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                     <label className="block text-[11px] font-medium tracking-widest uppercase text-text-secondary mb-1.5">Project folder path</label>
                     <div className="flex gap-2">
                       <input type="text" value={localPath} onChange={e => setLocalPath(e.target.value)} placeholder="e.g. /home/user/projects/myapp or leave blank" className="flex-1 h-9 rounded-lg bg-surface-900 border border-border px-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand" />

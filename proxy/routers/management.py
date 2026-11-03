@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from config.logging import log_warn
 from config.model_map import model_mapper
+from config.recent_dirs import add_recent_dir, load_recent_dirs
 from config.codex_config import setup_codex_config, persist_codex_env_var, get_codex_config_path, DEFAULT_BASE_URL as CODEX_BASE_URL
 import proxy.server_helpers as _helpers
 from proxy.server_helpers import (
@@ -129,6 +130,7 @@ async def ide_launch(request: IDELaunchRequest):
         raise HTTPException(status_code=404, detail=f"IDE '{request.editor}' not found. Run /api/ide-detect-refresh first.")
     try:
         _launch_fn(info["binary"], target_cwd)
+        _remember_launch_dir(request.path)
         return {"status": "success", "message": f"Launched {info['name']}!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -290,11 +292,22 @@ async def update_model(request: ModelMappingRequest):
     return {"status": "success", "mappings": model_mapper.get_all()}
 
 
+def _remember_launch_dir(path: Optional[str]) -> None:
+    if path and os.path.isdir(path):
+        add_recent_dir(path)
+
+
+@router.get("/api/recent-dirs")
+async def get_recent_dirs():
+    return {"dirs": load_recent_dirs()}
+
+
 @router.post("/api/launch")
 async def launch_claude(request: LaunchRequest):
     cmd, target_cwd = _resolve_launch(request, "claude")
     try:
         _launch_terminal(cmd, target_cwd)
+        _remember_launch_dir(request.path)
         return {"status": "success", "message": "Launched Claude Code!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -350,6 +363,7 @@ async def codex_launch(request: LaunchRequest):
     cmd, target_cwd = _resolve_launch(request, "codex")
     try:
         _launch_terminal(cmd, target_cwd)
+        _remember_launch_dir(request.path)
         return {"status": "success", "message": "Launched Codex!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
