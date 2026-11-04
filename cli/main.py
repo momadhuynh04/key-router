@@ -1,4 +1,3 @@
-import os
 import sys
 import uvicorn
 from config.settings import settings
@@ -39,17 +38,14 @@ def _build_typer_app():
             help="openai_compatible (/chat/completions) or anthropic (/v1/messages — models must be supported there)",
         ),
         base_url: str = typer.Option(..., "--base-url", help="Base URL e.g. https://api.example.com/v1"),
-        api_key_env: str = typer.Option(None, "--api-key-env", help="ENV var name for API key"),
-        api_key: str = typer.Option(None, "--api-key", help="Alias for --api-key-env (ENV var name)"),
+        api_key: str = typer.Option(None, "--api-key", help="API key value (stored in secrets.json)"),
         header: list[str] = typer.Option(None, "--header", help="Extra header K=V (repeatable)"),
         model: list[str] = typer.Option(None, "--model", help="Model ID:Name:reasoning:image (repeatable)"),
     ):
-        from config.custom_providers import save_provider, normalize_api_key_input, validate_spec
-        env_name = api_key_env or api_key or ""
-        if not env_name:
-            typer.echo("Error: --api-key-env (or --api-key) is required", err=True)
-            raise typer.Exit(1)
-        env_name = normalize_api_key_input(env_name)
+        from config.custom_providers import save_provider, validate_spec
+        from config.secrets import set_custom_key
+
+        key_value = (api_key or "").strip()
         headers = {}
         for h in header or []:
             if "=" not in h:
@@ -76,7 +72,6 @@ def _build_typer_app():
             "display_name": display_name.strip(),
             "provider_api": api,
             "base_url": base_url.strip().rstrip("/"),
-            "api_key_env": env_name,
             "headers": headers,
             "models": models,
         }
@@ -85,10 +80,13 @@ def _build_typer_app():
         except ValueError as e:
             typer.echo(f"Validation error: {e}", err=True)
             raise typer.Exit(1)
-        if not os.environ.get(env_name):
-            typer.echo(f"Warning: ENV {env_name} is not set", err=True)
+        if not key_value and not headers:
+            typer.echo("Error: --api-key (or --header) is required", err=True)
+            raise typer.Exit(1)
         save_provider(spec)
-        typer.echo(f"Provider '{spec['id']}' saved ({len(models)} model(s), api_key_env={env_name})")
+        if key_value:
+            set_custom_key(spec["id"], key_value)
+        typer.echo(f"Provider '{spec['id']}' saved ({len(models)} model(s), key={'stored' if key_value else 'headers only'})")
 
     @app.command("list-providers")
     def list_providers():
@@ -98,7 +96,7 @@ def _build_typer_app():
             typer.echo("No custom providers")
             return
         for pid, spec in providers.items():
-            hk = "has_key" if spec.get("has_key") else "missing ENV"
+            hk = "has_key" if spec.get("has_key") else "missing key"
             mids = ", ".join(m.get("id", "") for m in spec.get("models", []))
             typer.echo(f"{pid} | {spec.get('display_name')} | {spec.get('provider_api')} | {spec.get('base_url')} | {hk} | models: {mids}")
 
@@ -114,15 +112,12 @@ def _build_typer_app():
     @app.command("list-models")
     def list_models(provider: str = typer.Argument(..., help="Provider ID")):
         import httpx
-        from config.custom_providers import load_custom_providers
+        from config.custom_providers import load_custom_providers, models_headers
         spec = load_custom_providers().get(provider)
         if not spec:
             typer.echo(f"Provider '{provider}' not found", err=True)
             raise typer.Exit(1)
-        api_key = os.environ.get(spec.get("api_key_env", ""), "") if spec.get("api_key_env") else ""
-        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        if spec.get("headers"):
-            headers.update(spec["headers"])
+        headers = models_headers(spec)
         base = spec.get("base_url", "").rstrip("/")
         candidates = [f"{base}/models", f"{base}/v1/models"] if not base.endswith("/models") else [base]
         for url in candidates:

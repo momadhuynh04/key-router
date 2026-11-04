@@ -36,6 +36,11 @@ router = APIRouter()
 cached_available_models: Dict = {}
 
 
+def invalidate_available_models() -> None:
+    global cached_available_models
+    cached_available_models = {}
+
+
 class ModelMappingRequest(BaseModel):
     source_model: str
     target: str
@@ -65,7 +70,7 @@ class CustomProviderSpec(BaseModel):
     display_name: str
     provider_api: str
     base_url: str
-    api_key: str
+    api_key: str = ""
     headers: Optional[Dict[str, str]] = None
     models: list[CustomModelSpec]
 
@@ -150,9 +155,11 @@ async def get_available_models():
         "openrouter": [],
         "deepseekplatform": ["deepseek-chat", "deepseek-reasoner", "deepseek-coder"]
     }
+    from config.secrets import get_builtin_key, get_builtin_base_url
     try:
+        openrouter_base = get_builtin_base_url("openrouter").rstrip("/")
         async with httpx.AsyncClient() as client:
-            resp = await client.get("https://openrouter.ai/api/v1/models", timeout=5.0)
+            resp = await client.get(f"{openrouter_base}/v1/models", timeout=5.0)
             if resp.status_code == 200:
                 data = resp.json()
                 models_data["openrouter"] = [m["id"] for m in data.get("data", [])]
@@ -160,9 +167,9 @@ async def get_available_models():
         log_warn(f"Error fetching OpenRouter models: {e}")
         models_data["openrouter"] = ["qwen/qwen-turbo", "meta-llama/llama-3-8b-instruct"]
     try:
-        from config.settings import settings
+        deepseek_base = get_builtin_base_url("deepseek_openai").rstrip("/")
         async with httpx.AsyncClient() as client:
-            resp = await client.get("https://api.deepseek.com/models", headers={"Authorization": f"Bearer {settings.deepseek_api_key}"}, timeout=5.0)
+            resp = await client.get(f"{deepseek_base}/models", headers={"Authorization": f"Bearer {get_builtin_key('deepseek')}"}, timeout=5.0)
             if resp.status_code == 200:
                 data = resp.json()
                 models_data["deepseekplatform"] = [m["id"] for m in data.get("data", [])]
@@ -172,10 +179,11 @@ async def get_available_models():
         log_warn(f"Error fetching DeepSeek models: {e}")
         models_data["deepseekplatform"] = ["deepseek-chat", "deepseek-reasoner", "deepseek-coder"]
     try:
-        from config.settings import settings as _gs
-        if _gs.google_api_key:
+        google_api_key = get_builtin_key("google")
+        if google_api_key:
+            google_base = get_builtin_base_url("google").rstrip("/")
             async with httpx.AsyncClient() as client:
-                resp = await client.get(f"{_gs.google_base_url.rstrip('/')}/models?key={_gs.google_api_key}", timeout=5.0)
+                resp = await client.get(f"{google_base}/models?key={google_api_key}", timeout=5.0)
                 if resp.status_code == 200:
                     data = resp.json()
                     ids = []
@@ -212,62 +220,76 @@ async def list_custom_providers():
 
 @router.post("/api/custom-providers")
 async def create_custom_provider(request: CustomProviderSpec):
-    from config.custom_providers import load_custom_providers, save_custom_providers, normalize_api_key_input
-    raw_env = normalize_api_key_input(request.api_key)
-    if not raw_env.strip():
-        headers = request.headers or {}
-        has_headers = any(k.strip() and v.strip() for k, v in headers.items()) if isinstance(headers, dict) else False
-        if not has_headers:
-            raise HTTPException(status_code=400, detail="API key ENV var is required (or provide auth via headers)")
-    else:
-        try:
-            from config.custom_providers import validate_spec as _vs
-            _vs({"id": request.id, "display_name": request.display_name, "provider_api": request.provider_api, "base_url": request.base_url, "api_key_env": raw_env, "headers": request.headers, "models": [m.model_dump() for m in request.models]})
-        except ValueError as ve:
-            raise HTTPException(status_code=400, detail=str(ve))
+    from config.custom_providers import (
+        get_api_key_for_provider,
+        get_masked_providers,
+        load_custom_providers,
+        save_custom_providers,
+        validate_spec,
+    )
+    from config.secrets import set_custom_key
+
+    provider_id = request.id.strip().lower()
+    existing = load_custom_providers().get(provider_id)
     spec = {
-        "id": request.id.strip().lower(),
+        "id": provider_id,
         "display_name": request.display_name.strip(),
         "provider_api": request.provider_api,
         "base_url": request.base_url.strip().rstrip("/"),
-        "api_key_env": raw_env,
         "headers": request.headers or {},
         "models": [m.model_dump() for m in request.models],
     }
+    try:
+        validate_spec(spec)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+    api_key = (request.api_key or "").strip()
+    existing_key = get_api_key_for_provider(existing) if existing else ""
+    has_headers = any(k.strip() and v.strip() for k, v in spec["headers"].items())
+    if not api_key and not existing_key and not has_headers:
+        raise HTTPException(status_code=400, detail="API key (or auth headers) is required")
+
     providers = dict(load_custom_providers())
-    providers[spec["id"]] = spec
+    providers[provider_id] = spec
     save_custom_providers(providers)
-    global cached_available_models
-    cached_available_models = {}
-    from config.custom_providers import get_masked_providers as _masked
-    masked = _masked()
-    return {"status": "success", "providers": masked}
+    if api_key:
+        set_custom_key(provider_id, api_key)
+    invalidate_available_models()
+    return {"status": "success", "providers": get_masked_providers()}
 
 
 @router.delete("/api/custom-providers/{provider_id}")
 async def delete_custom_provider(provider_id: str):
     from config.custom_providers import delete_provider, load_custom_providers, get_masked_providers
+    from config.secrets import delete_custom_key
+
     providers = load_custom_providers()
     if provider_id not in providers:
         raise HTTPException(status_code=404, detail=f"Provider '{provider_id}' not found")
-    orphaned = [k for k, v in model_mapper.get_all().items() if v.startswith(f"{provider_id}/")]
+    prefix = f"{provider_id}/"
+    blocking = [f"{src} → {tgt}" for src, tgt in model_mapper.get_all().items() if tgt.startswith(prefix)]
+    if blocking:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Provider '{provider_id}' is still used by routes: {', '.join(blocking)}. "
+                "Remove or repoint those routes first."
+            ),
+        )
     delete_provider(provider_id)
-    global cached_available_models
-    cached_available_models = {}
-    return {"status": "success", "providers": get_masked_providers(), "orphaned_mappings": orphaned}
+    delete_custom_key(provider_id)
+    invalidate_available_models()
+    return {"status": "success", "providers": get_masked_providers(), "orphaned_mappings": []}
 
 
 @router.get("/api/custom-providers/{provider_id}/models")
 async def fetch_custom_provider_models(provider_id: str):
-    import os as _os
-    from config.custom_providers import load_custom_providers
+    from config.custom_providers import load_custom_providers, models_headers
     spec = load_custom_providers().get(provider_id)
     if not spec:
         raise HTTPException(status_code=404, detail=f"Provider '{provider_id}' not found")
-    api_key = _os.environ.get(spec.get("api_key_env", ""), "") if spec.get("api_key_env") else ""
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    if spec.get("headers"):
-        headers.update(spec["headers"])
+    headers = models_headers(spec)
     base = spec.get("base_url", "").rstrip("/")
     candidates = [f"{base}/models", f"{base}/v1/models"] if not base.endswith("/models") else [base]
     for url in candidates:

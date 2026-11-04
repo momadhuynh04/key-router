@@ -5,7 +5,6 @@ from provider.base import BaseProvider
 from provider.openai_base import OpenAIBaseProvider
 from models.anthropic import AnthropicRequest, AnthropicResponse
 from models.events import SSEEvent
-from config.settings import settings
 
 
 class GenericOpenAIProvider(OpenAIBaseProvider):

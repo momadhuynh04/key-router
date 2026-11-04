@@ -286,6 +286,79 @@ def _responses_tool_choice_to_anthropic(tool_choice: Any) -> Optional[Dict[str, 
     return None
 
 
+def _content_to_blocks(content: Any) -> List[Dict[str, Any]]:
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}] if content else []
+    if isinstance(content, list):
+        return [block for block in content if isinstance(block, dict)]
+    return []
+
+
+def _thinking_first(blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Anthropic requires thinking blocks to lead the assistant message."""
+    thinking = [block for block in blocks if block.get("type") == "thinking"]
+    if not thinking:
+        return blocks
+    return thinking + [block for block in blocks if block.get("type") != "thinking"]
+
+
+def _merge_adjacent_messages(messages: List[Message]) -> List[Message]:
+    """Collapse consecutive same-role messages.
+
+    Codex emits one `function_call` item per parallel tool call, which used to become
+    consecutive assistant messages. Strict Anthropic gateways reject the first
+    assistant tool_use because its tool_result is not in the immediately next message.
+    """
+    merged: List[Message] = []
+    for message in messages:
+        if merged and merged[-1].role == message.role:
+            previous = merged[-1]
+            previous.content = _content_to_blocks(previous.content) + _content_to_blocks(message.content)
+        else:
+            merged.append(Message(role=message.role, content=message.content))
+    for message in merged:
+        if message.role == "assistant" and isinstance(message.content, list):
+            message.content = _thinking_first(message.content)
+    return merged
+
+
+def _ensure_tool_pairing(messages: List[Message]) -> List[Message]:
+    """Guarantee every assistant tool_use is answered in the next user message."""
+    paired: List[Message] = []
+    for index, message in enumerate(messages):
+        paired.append(message)
+        if message.role != "assistant":
+            continue
+        tool_ids = [
+            block.get("id")
+            for block in _content_to_blocks(message.content)
+            if block.get("type") == "tool_use" and block.get("id")
+        ]
+        if not tool_ids:
+            continue
+        following = messages[index + 1] if index + 1 < len(messages) else None
+        if following is not None and following.role == "user":
+            blocks = _content_to_blocks(following.content)
+            present = {
+                block.get("tool_use_id")
+                for block in blocks
+                if block.get("type") == "tool_result"
+            }
+            missing = [tool_id for tool_id in tool_ids if tool_id not in present]
+            if missing:
+                blocks.extend(
+                    {"type": "tool_result", "tool_use_id": tool_id, "content": "Tool output unavailable."}
+                    for tool_id in missing
+                )
+                following.content = blocks
+        else:
+            paired.append(Message(role="user", content=[
+                {"type": "tool_result", "tool_use_id": tool_id, "content": "Tool output unavailable."}
+                for tool_id in tool_ids
+            ]))
+    return paired
+
+
 def responses_to_anthropic(req: ResponsesRequest) -> AnthropicRequest:
     system_parts: List[str] = []
     if req.instructions:
@@ -412,6 +485,7 @@ def responses_to_anthropic(req: ResponsesRequest) -> AnthropicRequest:
             # other types → flush orphan thinking above, ignored
 
     flush_pending_thinking()
+    messages = _ensure_tool_pairing(_merge_adjacent_messages(messages))
 
     all_tools: List[Dict[str, Any]] = []
     all_tools.extend(req.tools or [])

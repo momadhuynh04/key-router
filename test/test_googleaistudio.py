@@ -104,9 +104,8 @@ async def test_translate_response_blocked():
 
 @pytest.mark.asyncio
 @patch("httpx.AsyncClient")
-async def test_stream_text_and_tool(mock_client_cls):
-    from config.settings import settings
-    settings.google_api_key = "dummy"
+async def test_stream_text_and_tool(mock_client_cls, monkeypatch):
+    monkeypatch.setattr("provider.googleaistudio.adapter.get_builtin_key", lambda name: "dummy")
 
     class MockStreamResp:
         status_code = 200

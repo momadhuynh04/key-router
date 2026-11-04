@@ -7,7 +7,7 @@ from provider.base import BaseProvider
 from models.anthropic import AnthropicRequest, AnthropicResponse, AnthropicUsage
 from models.events import SSEEvent
 from proxy.image_utils import anthropic_block_to_gemini_part
-from config.settings import settings
+from config.secrets import get_builtin_key, get_builtin_base_url
 from config.logging import log_warn
 
 
@@ -78,8 +78,8 @@ def _sanitize_schema_for_gemini(obj: Any) -> Any:
 class GoogleAIStudioProvider(BaseProvider):
     def __init__(self, target_model: str):
         super().__init__(target_model)
-        self.api_key = settings.google_api_key
-        self.base_url = settings.google_base_url.rstrip("/")
+        self.api_key = get_builtin_key("google")
+        self.base_url = get_builtin_base_url("google").rstrip("/")
 
     def _get_headers(self) -> Dict[str, str]:
         return {
@@ -364,10 +364,9 @@ class GoogleAIStudioProvider(BaseProvider):
 
     async def stream(self, request_body: Dict[str, Any]) -> AsyncIterator[SSEEvent]:
         if not self.api_key:
-            from config.settings import settings as _s
-            self.api_key = _s.google_api_key
+            self.api_key = get_builtin_key("google")
         if not self.api_key:
-            raise ValueError("Missing GOOGLE_API_KEY for googleaistudio provider — set it in .env")
+            raise ValueError("Missing Google API key for googleaistudio provider — add it in Settings")
 
         msg_id = f"msg_{uuid.uuid4().hex}"
         yield SSEEvent(event="message_start", data={

@@ -21,6 +21,8 @@ def create_app() -> FastAPI:
     from proxy.routers.management import router as management_router
     from proxy.routers.agents import router as agents_router
     from proxy.routers.skills import router as skills_router
+    from proxy.routers.settings import router as settings_router
+    from proxy.routers.testlab import router as testlab_router
 
     app.include_router(anthropic_router)
     app.include_router(openai_router)
@@ -28,6 +30,8 @@ def create_app() -> FastAPI:
     app.include_router(management_router)
     app.include_router(agents_router)
     app.include_router(skills_router)
+    app.include_router(settings_router)
+    app.include_router(testlab_router)
 
     @app.api_route("/v1/{path_name:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"], operation_id="catch_all_v1")
     async def catch_all_v1(path_name: str, request: Request):

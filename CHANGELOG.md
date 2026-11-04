@@ -9,6 +9,23 @@ matching section here. Releases before 0.1.32 are tracked in git history (`git l
 
 ### Added
 
+- **Test lab (headless Claude Code / Codex)** — a new tab runs one agent turn in a chosen folder
+  (inside `allowed_roots`) with optional image input and notes the result per check: image
+  understanding, HTML file, OS/machine info, installed languages, Markdown review, and a ≤10 shell
+  command budget. The model can be overridden with `provider/model` (e.g.
+  `deepseekplatform/deepseek-flash`) which **bypasses Model routing** and calls that provider directly.
+  Runs stream steps, show artifacts, can be stopped, and are kept in a 20-run history. Each run writes
+  artifacts to `<workdir>/.key-router-testlab/<run-id>/`.
+- **Settings page** — a dedicated **Settings** tab manages provider API keys for OpenRouter, DeepSeek,
+  Google AI Studio and every custom provider, plus the built-in base URLs. Keys are written to
+  `secrets.json` (gitignored, `0600`) and read on every provider instantiation, so saving applies on
+  the next request **without restarting the proxy**. The dashboard only ever receives masked previews,
+  and `secrets.json` is the only source for keys.
+- **Providers page** — custom providers now have a dedicated **Providers** tab under **Model routing**
+  with full CRUD: list cards, inline expand for base URL, API type, key status, models, headers and
+  the routes that reference the provider, add/edit through the existing modal, and **Fetch models**
+  from the provider's `/models` endpoint. Editing keeps the provider ID locked because routes
+  reference it.
 - **Browse for allowed roots** — the Safety fence in **Agents → Bridge settings** now has a
   **Browse folder** button that appends the picked folder, and a **Browse…** button on each row
   to replace it. It uses the same native folder picker as the launcher.
@@ -18,6 +35,19 @@ matching section here. Releases before 0.1.32 are tracked in git history (`git l
 
 ### Changed
 
+- **Direct `provider/model` addressing** — every ingress now resolves a requested model written as
+  `<builtin|custom-provider>/<model>` directly (e.g. `openrouter/anthropic/claude-sonnet-4.5`),
+  bypassing `config.json` routes. The Test lab uses this for its model override.
+- **API keys moved from `.env` to `secrets.json`** — `secrets.json` is now the only key source;
+  `.env` only holds `HOST`/`PORT`. Custom providers store one key per provider ID instead of
+  referencing an ENV name, the form takes the raw key, and an empty key field on edit keeps the
+  existing key. Obsolete `api_key_env` values in `config.json` are ignored.
+- **Custom-provider CLI takes the raw key** — `add-provider --api-key "sk-..."` now stores the key in
+  `secrets.json`; `--api-key-env` was removed. Existing `api_key_env` fields in `config.json` are ignored.
+- **Provider deletion is guarded** — `DELETE /api/custom-providers/{id}` now returns `409` with the
+  offending routes while any `model_mappings` target still starts with `<id>/`. The dashboard
+  disables **Delete** and names the routes to remove or repoint first. The old
+  `+ Add custom provider` button on Model routing is now a **Manage providers →** link to the new tab.
 - **Add custom provider validation** — when **Submit** is disabled, the modal now lists
   every blocking field (invalid ID, Base URL without `http(s)://`, missing model, …) instead
   of leaving the button greyed out silently. The Base URL hint shows which endpoint is
@@ -27,6 +57,16 @@ matching section here. Releases before 0.1.32 are tracked in git history (`git l
 
 ### Fixed
 
+- **Codex parallel tool calls no longer 400 on Anthropic-native providers** — a Responses history can
+  contain several consecutive `function_call` items. Translation used to emit one assistant message per
+  call, so strict gateways (DeepSeek `/anthropic`) rejected the first `tool_use` with
+  `tool_use ids were found without tool_result blocks immediately after`. Adjacent same-role messages
+  are now merged, thinking blocks lead the assistant message, and every `tool_use` is guaranteed a
+  matching `tool_result` in the next user message (a placeholder is inserted when an output is missing).
+- **Test lab reports the real provider error** — when Claude Code or Codex exits non-zero, the run now
+  surfaces the provider/stream error (for example an upstream 400) instead of the CLI's last stderr line.
+- **Fetch models uses the stored key** — `GET /api/custom-providers/{id}/models` now resolves the same
+  key source as live requests and sends `x-api-key` for Anthropic-native providers.
 - **Claude Code `role: "system"` messages no longer break Anthropic-native providers** —
   Claude Code ≥ 2.1.3xx sends its Environment/context block as `messages[1].role = "system"`.
   Anthropic upstreams that only accept `user | assistant` rejected the whole request with

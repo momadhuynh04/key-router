@@ -5,15 +5,15 @@ from provider.base import BaseProvider
 from provider.openai_base import OpenAIBaseProvider
 from models.anthropic import AnthropicRequest, AnthropicResponse
 from models.events import SSEEvent
-from config.settings import settings
+from config.secrets import get_builtin_key, get_builtin_base_url
 
 class DeepSeekAnthropicProvider(BaseProvider):
     supports_anthropic: bool = True
 
     def __init__(self, target_model: str):
         super().__init__(target_model)
-        self.api_key = settings.deepseek_api_key
-        self.base_url = settings.deepseek_base_url_anthropic.rstrip("/")
+        self.api_key = get_builtin_key("deepseek")
+        self.base_url = get_builtin_base_url("deepseek_anthropic").rstrip("/")
 
     async def translate_request(self, anthropic_request: AnthropicRequest) -> Dict[str, Any]:
         body = anthropic_request.model_dump(exclude_none=True)
@@ -77,6 +77,6 @@ class DeepSeekOpenAIProvider(OpenAIBaseProvider):
     def __init__(self, target_model: str):
         super().__init__(
             target_model=target_model,
-            base_url=settings.deepseek_base_url_openai.rstrip("/"),
-            api_key=settings.deepseek_api_key,
+            base_url=get_builtin_base_url("deepseek_openai").rstrip("/"),
+            api_key=get_builtin_key("deepseek"),
         )

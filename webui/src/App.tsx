@@ -1,8 +1,11 @@
-import { useState, useEffect, useRef } from 'react'
-import CustomProviderModal from './CustomProviderModal'
+import { useState, useEffect } from 'react'
+import CustomProvidersPanel from './CustomProvidersPanel'
+import SearchableDropdown from './SearchableDropdown'
 import AgentModal from './AgentModal'
 import BridgePanel, { type BridgeSettings } from './BridgePanel'
 import SkillsPanel from './SkillsPanel'
+import SettingsPanel from './SettingsPanel'
+import TestLabPanel from './TestLabPanel'
 import type { Agent } from './AgentModal'
 
 const FAMILY_KEYS = ['claude', 'codex']
@@ -14,71 +17,6 @@ function GitHubIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
       <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
     </svg>
   )
-}
-
-function SearchableDropdown({ options, value, onChange, placeholder }: { options: string[], value: string, onChange: (val: string) => void, placeholder: string }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const wrapperRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const filteredOptions = options.filter(opt => opt.toLowerCase().includes(search.toLowerCase()));
-
-  useEffect(() => {
-    if (!isOpen) setSearch(value);
-  }, [isOpen, value]);
-
-  return (
-    <div ref={wrapperRef} className="relative w-full">
-      <input
-        type="text"
-        value={isOpen ? search : value}
-        onChange={e => {
-          setSearch(e.target.value);
-          if (!isOpen) setIsOpen(true);
-          onChange(e.target.value);
-        }}
-        onFocus={() => setIsOpen(true)}
-        placeholder={placeholder}
-        className="w-full h-9 rounded-lg bg-surface-900 border border-border px-3 pr-8 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand transition"
-      />
-      <div className={`absolute right-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}>
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-        </svg>
-      </div>
-      {isOpen && (
-        <div className="absolute z-50 w-full mt-2 bg-surface-800 rounded-xl border border-border shadow-lg max-h-60 overflow-y-auto">
-          {filteredOptions.length === 0 ? (
-            <div className="px-3 py-3 text-text-muted text-sm italic text-center">No models found</div>
-          ) : (
-            filteredOptions.map((opt) => (
-              <div
-                key={opt}
-                onClick={() => {
-                  onChange(opt);
-                  setSearch(opt);
-                  setIsOpen(false);
-                }}
-                className={`px-3 py-2 cursor-pointer text-sm transition-colors hover:bg-white/[0.06] ${value === opt ? 'bg-brand/15 text-brand' : 'text-text-secondary'}`}
-              >
-                {opt}
-              </div>
-            ))
-          )}
-        </div>
-      )}
-    </div>
-  );
 }
 
 function NavButton({ active, onClick, icon, label, collapsed }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; collapsed: boolean }) {
@@ -97,7 +35,7 @@ function NavButton({ active, onClick, icon, label, collapsed }: { active: boolea
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'routing' | 'launcher' | 'agents'>('routing');
+  const [activeTab, setActiveTab] = useState<'routing' | 'providers' | 'testlab' | 'launcher' | 'agents' | 'settings'>('routing');
   const [mappings, setMappings] = useState<Record<string, string>>({});
   const [sourceModel, setSourceModel] = useState("claude");
   const [provider, setProvider] = useState("openrouter");
@@ -112,7 +50,6 @@ function App() {
   const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({ openrouter: [], deepseekplatform: [], googleaistudio: [] });
   const [isLoadingModels, setIsLoadingModels] = useState(true);
   const [customProviders, setCustomProviders] = useState<Record<string, any>>({});
-  const [showCustomModal, setShowCustomModal] = useState(false);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentSettings, setAgentSettings] = useState<BridgeSettings | null>(null);
   const [agentWarnings, setAgentWarnings] = useState<string[]>([]);
@@ -143,6 +80,10 @@ function App() {
   }, []);
   const fetchCustomProviders = () => {
     fetch('/api/custom-providers').then(r => r.json()).then(d => setCustomProviders(d.providers || {})).catch(() => {});
+  };
+  const refreshCustomProviders = () => {
+    fetchCustomProviders();
+    fetch('/api/available-models').then(r => r.json()).then(d => setAvailableModels(d)).catch(() => {});
   };
   useEffect(() => { fetchCustomProviders(); }, []);
   const fetchAgents = () => {
@@ -200,8 +141,11 @@ function App() {
   };
 
   const routingIcon = <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
+  const providersIcon = <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M6 3v4m12-4v4M4 7h16v4a8 8 0 01-8 8 8 8 0 01-8-8V7zm8 12v3" /></svg>
+  const testlabIcon = <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3v6.75L4.5 18.75A1.5 1.5 0 005.8 21h12.4a1.5 1.5 0 001.3-2.25l-5.25-9V3M9 3h6M7.5 14.5h9" /></svg>
   const launcherIcon = <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
   const agentsIcon = <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" /></svg>
+  const settingsIcon = <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
 
   return (
     <div className="min-h-screen bg-surface-950 flex">
@@ -250,8 +194,11 @@ function App() {
 
         <nav className={`flex flex-1 flex-col gap-1 py-2 ${sidebarOpen ? 'px-3' : 'items-center px-3'}`}>
           <NavButton active={activeTab === 'routing'} onClick={() => setActiveTab('routing')} icon={routingIcon} label="Model routing" collapsed={!sidebarOpen} />
+          <NavButton active={activeTab === 'providers'} onClick={() => setActiveTab('providers')} icon={providersIcon} label="Providers" collapsed={!sidebarOpen} />
+          <NavButton active={activeTab === 'testlab'} onClick={() => setActiveTab('testlab')} icon={testlabIcon} label="Test lab" collapsed={!sidebarOpen} />
           <NavButton active={activeTab === 'launcher'} onClick={() => setActiveTab('launcher')} icon={launcherIcon} label="Agent launcher" collapsed={!sidebarOpen} />
           <NavButton active={activeTab === 'agents'} onClick={() => setActiveTab('agents')} icon={agentsIcon} label="Agents" collapsed={!sidebarOpen} />
+          <NavButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={settingsIcon} label="Settings" collapsed={!sidebarOpen} />
         </nav>
 
         <div className={`py-4 border-t border-border ${sidebarOpen ? 'px-4' : 'flex justify-center px-3'}`}>
@@ -276,7 +223,7 @@ function App() {
             <div className="border border-border bg-surface-900 p-6 rounded-2xl">
               <div className="flex items-center justify-between gap-4 mb-5">
                 <h2 className="text-[13px] font-semibold tracking-widest uppercase text-text-secondary">Active model routes</h2>
-                <button onClick={() => setShowCustomModal(true)} className="rounded-full border border-border bg-surface-850 hover:bg-surface-800 text-text-secondary text-xs font-medium px-4 py-1.5 transition-colors">+ Add custom provider</button>
+                <button onClick={() => setActiveTab('providers')} className="text-xs text-text-muted hover:text-brand transition-colors">Manage providers →</button>
               </div>
 
               {Object.keys(mappings).length === 0 ? (
@@ -388,6 +335,21 @@ function App() {
               </div>
             </div>
             </div>
+          )}
+
+          {/* PROVIDERS */}
+          {activeTab === 'providers' && (
+            <CustomProvidersPanel
+              providers={customProviders}
+              mappings={mappings}
+              onRefresh={refreshCustomProviders}
+              onMappingsChanged={fetchMappings}
+            />
+          )}
+
+          {/* TEST LAB */}
+          {activeTab === 'testlab' && (
+            <TestLabPanel />
           )}
 
           {/* LAUNCHER */}
@@ -548,9 +510,15 @@ function App() {
             </div>
           )}
 
-        </main>
+          {/* SETTINGS */}
+          {activeTab === 'settings' && (
+            <SettingsPanel
+              onOpenProviders={() => setActiveTab('providers')}
+              onKeysChanged={refreshCustomProviders}
+            />
+          )}
 
-        {showCustomModal && <CustomProviderModal customProviders={customProviders} onClose={() => setShowCustomModal(false)} onSaved={() => { setShowCustomModal(false); fetchCustomProviders(); fetch('/api/available-models').then(r=>r.json()).then(d=>setAvailableModels(d)).catch(()=>{}); }} />}
+        </main>
 
         {showAgentModal && <AgentModal agent={editingAgent} existingIds={agents.map(a => a.id)} allowedRoots={agentSettings?.allowed_roots || []} modelMappings={mappings} onClose={() => setShowAgentModal(false)} onSaved={() => { setShowAgentModal(false); fetchAgents(); }} />}
 

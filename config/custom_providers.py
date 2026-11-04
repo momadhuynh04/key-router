@@ -4,8 +4,9 @@ import re
 from functools import lru_cache
 from typing import Dict, Any
 
+from config.secrets import get_custom_key, mask_secret
+
 ID_RE = re.compile(r"^[a-z0-9_-]{2,32}$")
-ENV_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 BUILTIN_IDS = {"openrouter", "deepseekplatform", "googleaistudio"}
 
 def _get_config_path() -> str:
@@ -28,25 +29,6 @@ def _write_config(data: Dict[str, Any]) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
-def normalize_api_key_input(raw: str) -> str:
-    if not raw:
-        return ""
-    s = raw.strip()
-    if s.startswith("env:"):
-        s = s[4:]
-    s = s.strip()
-    if s.startswith("${") and s.endswith("}"):
-        s = s[2:-1]
-    elif s.startswith("$"):
-        s = s[1:]
-    s = s.strip()
-    s = s.strip("{}")
-    return s.strip()
-
-def _looks_like_raw_key(value: str) -> bool:
-    s = value.strip()
-    return len(s) >= 20 and ("-" in s or "_" in s) and any(c.isalnum() for c in s) and not ENV_RE.match(s)
-
 def validate_spec(spec: Dict[str, Any]) -> None:
     pid = spec.get("id", "")
     if not isinstance(pid, str) or not ID_RE.match(pid):
@@ -64,19 +46,6 @@ def validate_spec(spec: Dict[str, Any]) -> None:
         raise ValueError("Base URL is required")
     if not re.match(r"^https?://", base_url.strip()):
         raise ValueError("Base URL must start with http:// or https://")
-    api_env = spec.get("api_key_env", "")
-    has_api_env = isinstance(api_env, str) and api_env.strip() != ""
-    headers = spec.get("headers") or {}
-    has_headers = isinstance(headers, dict) and any(k.strip() and v.strip() for k, v in headers.items()) if isinstance(headers, dict) else False
-    if not has_api_env and not has_headers:
-        raise ValueError("API key ENV var is required (or provide auth via headers)")
-    if has_api_env and _looks_like_raw_key(api_env):
-        raise ValueError(
-            "API key field must be an ENV var name (e.g. MY_PROVIDER_API_KEY), not the raw key. "
-            "Put the key in .env as MY_PROVIDER_API_KEY=sk-... and enter MY_PROVIDER_API_KEY here."
-        )
-    if has_api_env and not ENV_RE.match(api_env.strip()):
-        raise ValueError("API key ENV var must be UPPER_SNAKE_CASE (e.g. MY_PROVIDER_API_KEY)")
     models = spec.get("models", [])
     if not isinstance(models, list) or len(models) == 0:
         raise ValueError("At least one model is required")
@@ -136,49 +105,31 @@ def delete_provider(pid: str) -> bool:
     save_custom_providers(providers)
     return True
 
-def _resolve_env_value(env_name: str) -> str:
-    if not env_name:
-        return ""
-    direct = os.environ.get(env_name, "")
-    if direct:
-        return direct
-    try:
-        from dotenv import dotenv_values
-        vals = dotenv_values(_get_config_path().replace("config.json", ".env"))
-        if env_name in vals and vals[env_name]:
-            return vals[env_name]
-        vals2 = dotenv_values(".env")
-        if env_name in vals2 and vals2[env_name]:
-            return vals2[env_name]
-    except Exception:
-        pass
-    return ""
-
 def get_api_key_for_provider(spec: Dict[str, Any]) -> str:
-    return _resolve_env_value(spec.get("api_key_env", ""))
+    return get_custom_key(spec.get("id", ""))
+
+def models_headers(spec: Dict[str, Any], api_key: str | None = None) -> Dict[str, str]:
+    key = get_api_key_for_provider(spec) if api_key is None else api_key
+    if spec.get("provider_api") == "anthropic":
+        headers = {"x-api-key": key, "anthropic-version": "2023-06-01"} if key else {}
+    else:
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+    headers.update(spec.get("headers") or {})
+    return headers
 
 def get_masked_providers() -> Dict[str, Dict[str, Any]]:
     providers = load_custom_providers()
     masked: Dict[str, Dict[str, Any]] = {}
     for pid, spec in providers.items():
-        env_name = spec.get("api_key_env", "")
-        val = _resolve_env_value(env_name) if env_name else ""
-        if val:
-            masked_env = env_name[:2] + "****" + env_name[-2:] if len(env_name) > 4 else "****"
-            preview = val[:4] + "****" + val[-4:] if len(val) > 8 else "****"
-        else:
-            masked_env = env_name
-            preview = ""
-        has_key = bool(val)
+        key = get_api_key_for_provider(spec)
         masked[pid] = {
             "id": spec.get("id"),
             "display_name": spec.get("display_name"),
             "provider_api": spec.get("provider_api"),
             "base_url": spec.get("base_url"),
-            "api_key_env": env_name,
-            "api_key_preview": preview,
-            "masked_env": masked_env,
-            "has_key": has_key,
+            "has_key": bool(key),
+            "api_key_preview": mask_secret(key),
+            "key_source": "json" if key else "missing",
             "headers": spec.get("headers") or {},
             "models": spec.get("models") or [],
         }

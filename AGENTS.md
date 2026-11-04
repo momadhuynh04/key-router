@@ -62,7 +62,7 @@ npm run lint                        # oxlint
 
 # Custom provider CLI
 python -m cli add-provider --id my --display-name "MyAI" --api openai_compatible \
-  --base-url https://api.my.ai/v1 --api-key-env MY_API_KEY --model my-model:"My Model"
+  --base-url https://api.my.ai/v1 --api-key "sk-..." --model my-model:"My Model"
 python -m cli list-providers
 python -m cli remove-provider my
 python -m cli list-models my
@@ -140,6 +140,9 @@ its own repo later). `runner.proxy_env()` sets `ANTHROPIC_BASE_URL` etc. locally
 | `routers/management.py` | Dashboard API: `/api/models`, `available-models`, IDE detect/setup/launch, Codex setup, custom-provider CRUD, recent dirs, folder picker. |
 | `routers/agents.py` | Dashboard API for `agents.json` plus bridge process lifecycle (`/api/bridge/start|stop|status|logs`, PID file). |
 | `routers/skills.py` | `/api/skills*` — list, marketplace search, install, toggle, delete, preview. |
+| `routers/settings.py` | `/api/settings*` — key list/save/delete (built-in + custom), built-in base URLs. Responses only carry masked previews. |
+| `routers/testlab.py` | `/api/testlab*` — headless Claude Code/Codex runs: start, poll, stop, meta. |
+| `testlab.py` | Test-run domain: scenario prompt, run registry, Claude/Codex JSONL parsing, artifact + check building. Reuses `bridge.runner`/`registry`/`sse`; needs no bridge process. |
 | `openai_ingress.py` | OpenAI Chat ↔ Anthropic translation, including image parts and OpenAI SSE chunks. |
 | `responses_ingress.py` | Responses ↔ Anthropic translation, typed Responses SSE, thinking ↔ `reasoning` items, tool unwrapping, text-imitating-tool-call rescue, narration/garbled detection. **Large, central file — touch carefully.** |
 | `server_helpers.py` | IDE definitions/detection, safe JSON merge of `~/.claude/settings.json` and IDE settings, terminal/IDE launching. |
@@ -163,9 +166,10 @@ its own repo later). `runner.proxy_env()` sets `ANTHROPIC_BASE_URL` etc. locally
 
 | File | Responsibility |
 | ---- | -------------- |
-| `settings.py` | Pydantic settings from `.env` (keys, DeepSeek/Google base URLs, host/port). |
+| `settings.py` | Pydantic settings from `.env` (`host`, `port` only). |
+| `secrets.py` | `secrets.json` store: built-in/custom API keys and built-in base URL overrides (defaults hardcoded), masked previews, atomic `0600` writes. Sole key source; read per provider instantiation for hot reload. |
 | `model_map.py` | `ModelMapper` singleton. Exact match → tier keyword → family fallback (`claude`, `codex`) → error. Consolidates legacy `opus`/`sonnet`/`haiku` into `claude` and rewrites `config.json` on load. |
-| `custom_providers.py` | Custom provider CRUD in `config.json`, ENV-name validation, key masking, `lru_cache` (invalidate after writes), `.env` lookup. |
+| `custom_providers.py` | Custom provider CRUD in `config.json`, one key per provider ID via `secrets.py`, key masking, `lru_cache` (invalidate after writes). |
 | `codex_config.py` | Merges `~/.codex/config.toml` (`wire_api = "responses"`, dummy `env_key`) and persists the env var per OS. |
 | `skills.py` | Filesystem skills manager for Claude Code/Codex, global/project roots, `.disabled/` toggle, `npx skills@1.7.0 --copy`, `allowed_roots` fence. |
 | `recent_dirs.py` | Last 8 launch folders in `config.json`. |
@@ -194,9 +198,10 @@ its own repo later). `runner.proxy_env()` sets `ANTHROPIC_BASE_URL` etc. locally
 
 ### `webui/src/`
 
-No router/libraries beyond React. Tabs live in `App.tsx` (`routing`, `launcher`, `agents`);
-panel components are `AgentModal.tsx`, `BridgePanel.tsx`, `SkillsPanel.tsx`,
-`CustomProviderModal.tsx`. Data comes from `fetch('/api/...')`; Vite proxies `/api` and `/v1`
+No router/libraries beyond React. Tabs live in `App.tsx` (`routing`, `providers`, `testlab`,
+`launcher`, `agents`, `settings`); panel components are `AgentModal.tsx`, `BridgePanel.tsx`,
+`SkillsPanel.tsx`, `CustomProvidersPanel.tsx`, `CustomProviderModal.tsx`, `SettingsPanel.tsx`,
+`TestLabPanel.tsx`. Data comes from `fetch('/api/...')`; Vite proxies `/api` and `/v1`
 to `:8082` in dev. Styling is Tailwind utility classes with custom tokens in `index.css`.
 
 ### `cli/` and scripts
@@ -223,8 +228,10 @@ Bridge tests use `pytest-asyncio`, `tmp_path`, and `monkeypatch`.
 4. **`config.json` is shared state.** Writers (model map, custom providers, recent dirs,
    IDE detection) must merge, not replace, and custom-provider writes must call
    `invalidate_custom_providers_cache()`. Keep the file pretty-printed, no secrets.
-5. **Keys are ENV names, never raw values.** `api_key_env` must match
-   `^[A-Z_][A-Z0-9_]*$`; the dashboard only receives `has_key`/previews.
+5. **`secrets.json` is the only key source.** Built-in keys are keyed by provider (`openrouter`,
+   `deepseek`, `google`), custom keys by provider ID. `.env` only holds `HOST`/`PORT`; `api_key_env`
+   in `config.json` is obsolete and ignored. Dashboard responses only carry `has_key`/masked previews.
+   `secrets.json` is gitignored and written atomically with `0600`.
 6. **`agents.json` is re-read on every bridge request.** Dashboard edits apply without a
    restart. It is gitignored; `agents.example.json` is the template.
 7. **`allowed_roots` is a security fence.** `resolve_workdir()` and project-scoped skills
@@ -249,7 +256,13 @@ Bridge tests use `pytest-asyncio`, `tmp_path`, and `monkeypatch`.
     paths, signals, and shell assumptions. Use `pathlib`, `os.replace`, guarded `killpg`.
 16. **Do not edit `venv/`, `webui/node_modules/`, `projects/`, `backup/`, `bridge.log`,
     `bridge/state.json`, `.env`, `agents.json`, or `__pycache__/`.**
-17. **Reasoning must survive Responses round-trips.** Anthropic `thinking` blocks become
+17. **Test lab runs headless inside the proxy.** It reuses `bridge.runner`/`registry`/`sse` but does
+    not need the bridge process. Workdirs are fenced by `agents.json::allowed_roots`; artifacts go to
+    `<workdir>/.key-router-testlab/<run-id>/`; only one run is active at a time. A model written as
+    `<builtin|custom-provider>/<model>` resolves **directly**, bypassing `config.json` routes, on every
+    ingress. Codex gets `--skip-git-repo-check` and `-i <path>` for images; Claude gets image blocks
+    through stdin (`--input-format stream-json`).
+18. **Reasoning must survive Responses round-trips.** Anthropic `thinking` blocks become
     Responses `reasoning` items (never assistant text); Codex echoes them back and
     `responses_to_anthropic` re-attaches them to the `tool_use` message. DeepSeek `/anthropic`
     rejects tool turns whose thinking was dropped (`content[].thinking ... must be passed back`).
@@ -262,14 +275,23 @@ Bridge tests use `pytest-asyncio`, `tmp_path`, and `monkeypatch`.
 
 | Variable | Purpose |
 | -------- | ------- |
-| `OPENROUTER_API_KEY` | OpenRouter |
-| `DEEPSEEK_API_KEY` | DeepSeek |
-| `GOOGLE_API_KEY` | Google AI Studio |
-| `DEEPSEEK_BASE_URL_ANTHROPIC` | default `https://api.deepseek.com/anthropic` |
-| `DEEPSEEK_BASE_URL_OPENAI` | default `https://api.deepseek.com` |
-| `GOOGLE_BASE_URL` | default `https://generativelanguage.googleapis.com/v1beta` |
 | `HOST` / `PORT` | default `127.0.0.1` / `8082` |
-| `<CUSTOM>_API_KEY` | one ENV var per custom provider, referenced by name |
+
+No keys or base URLs live here. Manage them in the dashboard **Settings** tab (stored in `secrets.json`).
+
+### `secrets.json` (gitignored, dashboard-managed, `0600`)
+
+```json
+{
+  "keys": {"openrouter": "...", "deepseek": "...", "google": "..."},
+  "custom_keys": {"<provider-id>": "..."},
+  "base_urls": {"openrouter": "...", "deepseek_anthropic": "...", "deepseek_openai": "...", "google": "..."}
+}
+```
+
+Never return raw values from an API. There is no environment/`.env` fallback for keys: `secrets.json`
+is authoritative. Base URLs use the hardcoded default unless overridden here. Providers read this file
+on every instantiation, so Settings changes apply without a restart.
 
 ### `config.json` (git-tracked, edited by dashboard)
 
@@ -371,6 +393,7 @@ register the router in `proxy/app.py`, and expose it from `webui/src/App.tsx`.
 | `No mapping found for model ...` | `config/model_map.py::resolve`, `config.json::model_mappings` |
 | 400 on multi-turn tool calls / thinking | `provider/openai_base.py`, `provider/deepseekplatform/adapter.py` |
 | Gemini empty response / 400 on tools | `provider/googleaistudio/adapter.py` (schema sanitizing, `thoughtSignature`) |
+| Test lab run fails immediately | `proxy/testlab.py` (CLI in `PATH`, `allowed_roots` fence, image base64/size), `bridge/registry.py` flags |
 | Codex "narrates" instead of running tools | `proxy/responses_ingress.py` (`looks_like_action_narration`, `_extract_text_tool_calls`), `proxy/routers/responses.py` |
 | `Invalid discriminator value ... at messages.N.role` | `proxy/routers/anthropic.py::_fold_system_messages` (Claude Code sends `role: "system"` messages) |
 | `Invalid input at thinking` | `proxy/routers/anthropic.py::_strip_thinking_display` (Claude Code sends `thinking.display`) |

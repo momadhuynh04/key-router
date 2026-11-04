@@ -125,18 +125,12 @@ python -m venv venv
 # Linux/macOS: source venv/bin/activate
 pip install -r requirements.txt
 
-cp .env.example .env   # then edit .env — add at least one key
+cp .env.example .env   # optional — keys can also be set in the dashboard
 ```
 
-**.env** — add the keys for the providers you will use:
-
-```env
-OPENROUTER_API_KEY="sk-or-v1-..."   # from https://openrouter.ai/keys
-DEEPSEEK_API_KEY="sk-..."           # from https://platform.deepseek.com/api_keys
-GOOGLE_API_KEY="AIza..."            # from https://aistudio.google.com/app/apikey
-# custom providers: one ENV var per provider — referenced by name in UI/CLI
-MY_API_KEY="sk-..."
-```
+**API keys** live in `secrets.json` (gitignored, written with owner-only permissions) and are managed
+from the dashboard **Settings** tab. Add the key for each provider you use there — changes apply on the
+next request, no restart. `.env` only holds process settings (`HOST`/`PORT`); it is not a key source.
 
 ### 3. Build WebUI
 
@@ -192,13 +186,12 @@ After launch, open **http://127.0.0.1:8082** → continue to [Usage](#usage).
 
 ### 2. Custom providers
 
-**WebUI:** `+ Add custom provider` → ID (slug, `2-32` lowercase) → Display name → `OpenAI Compatible` or `Anthropic` → Base URL → API key **ENV name** (e.g. `MY_API_KEY`, raw `sk-...` stays in `.env`) → Models.
+**WebUI:** **Providers** tab → `+ Add provider` → ID (slug, `2-32` lowercase) → Display name → `OpenAI Compatible` or `Anthropic` → Base URL → API key (stored per provider ID in `secrets.json`) → Models. Expand a provider card to see its models, headers and routes; **Edit** reuses the same form with the ID locked, and **Fetch models** pulls the list from the provider's `/models` endpoint.
 
 **CLI:**
 
 ```bash
-export MY_API_KEY=sk-...
-python -m cli add-provider --id my --display-name "MyAI" --api openai_compatible --base-url https://api.my.ai/v1 --api-key-env MY_API_KEY --model my-model:"My Model"
+python -m cli add-provider --id my --display-name "MyAI" --api openai_compatible --base-url https://api.my.ai/v1 --api-key "sk-..." --model my-model:"My Model"
 python -m cli list-providers
 python -m cli remove-provider my
 python -m cli list-models my
@@ -211,9 +204,39 @@ key-router normalizes Claude Code's newer beta fields (`role: "system"` messages
 `thinking.display`) but does not forward the client's `anthropic-beta` header — add it in the
 provider's **Headers** field if an upstream requires a specific beta list.
 
-`GET /api/custom-providers` only returns `has_key`, never the raw key.
+`GET /api/custom-providers` only returns `has_key`, never the raw key. Deleting a provider is
+blocked while a model route still targets it: `DELETE /api/custom-providers/<id>` returns `409`
+with the offending routes, so repoint or remove them on **Model routing** first.
 
-### 3. Launch
+### 3. Settings
+
+The **Settings** tab manages credentials and upstream endpoints:
+
+- **Provider API keys** for OpenRouter, DeepSeek, Google AI Studio, plus one key per custom provider.
+  The dashboard only ever receives a masked preview.
+- **Base URLs** for the built-in providers. **Reset** restores the built-in default.
+
+Keys and base URLs are read on every provider instantiation, so saving takes effect on the next
+request — no proxy restart. `secrets.json` is gitignored and written atomically with `0600` on POSIX.
+
+### 4. Test lab
+
+**Test lab** runs one headless agent turn on **Claude Code** or **Codex** against a folder inside
+`allowed_roots`, with an optional image. It verifies:
+
+- the image was understood (vision test),
+- `key-router-test.html` was written and looks like valid HTML,
+- the agent found the host OS/machine information,
+- it listed installed language toolchains,
+- `key-router-review.md` reviews the HTML and mentions it,
+- the run stayed within 10 shell commands.
+
+The model field accepts `provider/model` (e.g. `openrouter/anthropic/claude-sonnet-4.5`,
+`deepseekplatform/deepseek-flash`), which **bypasses Model routing** and calls that provider directly;
+plain names use the current route. Artifacts go to `<workdir>/.key-router-testlab/<run-id>/`, steps
+stream into the dashboard, and the last 20 runs are kept for comparison.
+
+### 5. Launch
 
 | Target | What it does |
 | ------ | ------------ |
@@ -225,7 +248,7 @@ Then: `claude` · `codex` · or Spark icon in IDE.
 
 > IDE not showing? Check `which code` / `where code` is in `PATH`, then run `detect-ide.sh` / `detect-ide.bat`.
 
-### 4. Run agents from Open WebUI
+### 6. Run agents from Open WebUI
 
 `agent-bridge` lets a chat UI drive Claude Code as a real agent — it edits files and runs commands in a
 chosen project folder. It is a **separate service** (default `:8083`) that you start from the WebUI
@@ -281,7 +304,7 @@ Tool calls, permission denials, cost and duration are rendered inline in the rep
 `auto`, `ci` (`dontAsk`), `bypass` (only when `allow_bypass` is on; containers/VMs only). Headless runs
 have no interactive prompt: anything that would ask is **denied instead**, and the denial is shown in the chat.
 
-### 5. Manage skills
+### 7. Manage skills
 
 **Launcher → Skills** (no separate tab): choose **Claude Code** or **Codex**, then **Global** or
 **Project**, and use **Installed** / **Browse**.
@@ -497,11 +520,8 @@ python -m venv venv
 pip install -r requirements.txt
 
 cp .env.example .env
-# mở .env bằng notepad/vscode, dán key của provider sẽ dùng:
-# OPENROUTER_API_KEY="sk-or-v1-..."
-# DEEPSEEK_API_KEY="sk-..."
-# GOOGLE_API_KEY="AIza..."
-# custom: MY_API_KEY="sk-..." (mỗi provider 1 biến)
+# API key nhập ở tab Settings (lưu secrets.json, áp dụng ngay không cần restart).
+# .env chỉ chứa HOST/PORT, không chứa key.
 ```
 
 **3. Build WebUI**
@@ -528,7 +548,11 @@ Vào tab **Model routing**: `Opus / Sonnet / Haiku / Codex` → chọn **Target 
 
 Tab **Agent launcher**: **Claude Code** mở terminal đã set `ANTHROPIC_BASE_URL`, **Codex** tự ghi `~/.codex/config.toml`, **VS Code / Cursor / VSCodium** tự detect qua `PATH` — bấm là chạy.
 
-**Custom provider:** bấm **+ Add custom provider** → điền ID, Base URL (`https://api.xxx/v1`), API key **tên biến ENV** (ví dụ `MY_API_KEY`) — nhớ thêm `MY_API_KEY=sk-...` vào `.env` rồi restart. Hoặc CLI `python -m cli add-provider ...` như bản tiếng Anh.
+**Test lab:** tab **Test lab** chạy 1 lượt agent headless trên **Claude Code** hoặc **Codex** trong thư mục thuộc `allowed_roots`, kèm ảnh nếu muốn. Nó tự kiểm tra: hiểu ảnh, tạo `key-router-test.html`, đọc OS/cấu hình máy, liệt kê ngôn ngữ đã cài, viết `key-router-review.md`, và giới hạn ≤10 lệnh shell. Ô model nhận `provider/model` (vd `deepseekplatform/deepseek-flash`) để **bỏ qua Model routing**; artifact nằm ở `<workdir>/.key-router-testlab/<run-id>/`.
+
+**Settings:** tab **Settings** quản lý API key cho OpenRouter / DeepSeek / Google và từng custom provider (lưu `secrets.json`, áp dụng ngay không cần restart; dashboard chỉ thấy preview) cùng Base URL của 3 provider builtin. `secrets.json` là nguồn key duy nhất.
+
+**Custom provider:** vào tab **Providers** → **+ Add provider** → điền ID, Base URL (`https://api.xxx/v1`), API key (lưu theo provider ID trong `secrets.json`) → Models. Hoặc CLI `python -m cli add-provider ... --api-key "sk-..."` như bản tiếng Anh.
 
 **Chạy agent từ Open WebUI:** vào tab **Agents** → **Start bridge** (service riêng, mặc định `:8083`; key-router không spawn gì trên đường dữ liệu). Thêm agent ngay trên UI: CLI, model, workdir, quyền, effort, tools — `workdir` bắt buộc nằm trong `allowed_roots`. Sau đó trong Open WebUI: **Settings → Connections → OpenAI API**, URL `http://127.0.0.1:8083/v1`, key là token hiện trong dashboard, và bật `ENABLE_FORWARD_USER_INFO_HEADERS=True` (native: `export ENABLE_FORWARD_USER_INFO_HEADERS=True` trong `start.sh` trước `open-webui serve`; Docker: thêm `-e` hoặc entry `environment:`).
 

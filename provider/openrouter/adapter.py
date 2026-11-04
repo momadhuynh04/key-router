@@ -3,7 +3,7 @@ import httpx
 from typing import AsyncIterator, Dict, Any
 from provider.base import BaseProvider
 from provider.openai_base import OpenAIBaseProvider
-from config.settings import settings
+from config.secrets import get_builtin_key, get_builtin_base_url
 from models.anthropic import AnthropicRequest, AnthropicResponse
 from models.events import SSEEvent
 
@@ -14,8 +14,8 @@ class OpenRouterProvider(OpenAIBaseProvider):
     def __init__(self, target_model: str):
         super().__init__(
             target_model=target_model,
-            base_url="https://openrouter.ai/api/v1",
-            api_key=settings.openrouter_api_key
+            base_url=f"{get_builtin_base_url('openrouter').rstrip('/')}/v1",
+            api_key=get_builtin_key("openrouter"),
         )
 
     def _get_headers(self) -> Dict[str, str]:
@@ -32,8 +32,8 @@ class OpenRouterAnthropicProvider(BaseProvider):
 
     def __init__(self, target_model: str):
         super().__init__(target_model)
-        self.base_url = "https://openrouter.ai/api"
-        self.api_key = settings.openrouter_api_key
+        self.base_url = get_builtin_base_url("openrouter").rstrip("/")
+        self.api_key = get_builtin_key("openrouter")
 
     def _get_headers(self) -> Dict[str, str]:
         return {

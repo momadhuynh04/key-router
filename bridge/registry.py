@@ -124,14 +124,25 @@ def claude_stdin(prompt: str, images: List[Dict[str, Any]]) -> str:
     ) + "\n"
 
 
-def codex_argv(agent: AgentSpec, workdir: Path, session_id: Optional[str], resume: bool) -> List[str]:
+def codex_argv(
+    agent: AgentSpec,
+    workdir: Path,
+    session_id: Optional[str],
+    resume: bool,
+    image_paths: Optional[List[str]] = None,
+) -> List[str]:
     argv = ["codex", "exec"]
     # `resume` is a subcommand of `exec`, so it must come right after it.
     if session_id and resume:
         argv += ["resume", session_id]
     argv += CODEX_PERMISSION[agent.permission]
     argv += ["--json"]
+    argv += ["--skip-git-repo-check"]
     argv += ["-C", str(workdir)]
+    # `-i` is variadic; there is no positional prompt (it goes through stdin),
+    # so attaching images here cannot swallow it.
+    for image in image_paths or []:
+        argv += ["-i", image]
     if agent.model:
         argv += ["-m", agent.model]
     argv += ["-c", f'model_reasoning_effort="{CODEX_EFFORT[agent.effort]}"']
@@ -146,6 +157,7 @@ def build_invocation(
     session_id: Optional[str] = None,
     resume: bool = False,
     stream_input: bool = False,
+    image_paths: Optional[List[str]] = None,
 ) -> Tuple[List[str], Path]:
     """Return (argv, cwd).
 
@@ -158,5 +170,5 @@ def build_invocation(
     if agent.cli == "claude":
         argv = claude_argv(agent, session_id, resume, stream_input)
     else:
-        argv = codex_argv(agent, workdir, session_id, resume)
+        argv = codex_argv(agent, workdir, session_id, resume, image_paths)
     return argv, workdir

@@ -121,6 +121,72 @@ def test_request_function_call_roundtrip_items():
     assert tool_result["tool_use_id"] == "call_9"
     assert tool_result["content"] == "a.txt\nb.txt"
 
+def test_request_parallel_function_calls_are_merged_with_results():
+    req = _build_request(input=[
+        {"type": "message", "role": "user",
+         "content": [{"type": "input_text", "text": "run two commands"}]},
+        {"type": "function_call", "id": "fc_1", "call_id": "call_1",
+         "name": "exec_command", "arguments": "{\"cmd\": \"a\"}"},
+        {"type": "function_call", "id": "fc_2", "call_id": "call_2",
+         "name": "exec_command", "arguments": "{\"cmd\": \"b\"}"},
+        {"type": "function_call_output", "call_id": "call_1", "output": "one"},
+        {"type": "function_call_output", "call_id": "call_2", "output": "two"},
+    ])
+
+    result = responses_to_anthropic(req)
+
+    assert [message.role for message in result.messages] == ["user", "assistant", "user"]
+    assistant = result.messages[1].content
+    assert [block["type"] for block in assistant] == ["tool_use", "tool_use"]
+    assert [block["id"] for block in assistant] == ["call_1", "call_2"]
+    tool_results = result.messages[2].content
+    assert [block["tool_use_id"] for block in tool_results] == ["call_1", "call_2"]
+
+
+def test_request_parallel_calls_keep_thinking_first():
+    req = _build_request(input=[
+        {"type": "message", "role": "user",
+         "content": [{"type": "input_text", "text": "run two commands"}]},
+        {"type": "function_call", "id": "fc_1", "call_id": "call_1",
+         "name": "exec_command", "arguments": "{\"cmd\": \"a\"}"},
+        {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Need two runs."}]},
+        {"type": "function_call", "id": "fc_2", "call_id": "call_2",
+         "name": "exec_command", "arguments": "{\"cmd\": \"b\"}"},
+        {"type": "function_call_output", "call_id": "call_1", "output": "one"},
+        {"type": "function_call_output", "call_id": "call_2", "output": "two"},
+    ])
+
+    result = responses_to_anthropic(req)
+
+    assistant = result.messages[1].content
+    assert assistant[0] == {"type": "thinking", "thinking": "Need two runs."}
+    assert [block["id"] for block in assistant if block.get("type") == "tool_use"] == [
+        "call_1", "call_2",
+    ]
+
+
+def test_request_missing_tool_result_is_paired():
+    req = _build_request(input=[
+        {"type": "message", "role": "user",
+         "content": [{"type": "input_text", "text": "run two commands"}]},
+        {"type": "function_call", "id": "fc_1", "call_id": "call_1",
+         "name": "exec_command", "arguments": "{\"cmd\": \"a\"}"},
+        {"type": "function_call", "id": "fc_2", "call_id": "call_2",
+         "name": "exec_command", "arguments": "{\"cmd\": \"b\"}"},
+        {"type": "function_call_output", "call_id": "call_1", "output": "one"},
+    ])
+
+    result = responses_to_anthropic(req)
+
+    assert [message.role for message in result.messages] == ["user", "assistant", "user"]
+    tool_results = {
+        block["tool_use_id"]
+        for block in result.messages[2].content
+        if block.get("type") == "tool_result"
+    }
+    assert tool_results == {"call_1", "call_2"}
+
+
 def test_request_reasoning_before_function_call_becomes_thinking():
     req = _build_request(
         input=[

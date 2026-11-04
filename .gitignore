@@ -28,6 +28,7 @@ webui/dist/
 .env
 .env.local
 .env.*.local
+secrets.json
 
 # ========================
 # Agent / Internal
@@ -35,6 +36,7 @@ webui/dist/
 .agent/PLAN.MD
 .commandcode/
 projects/
+.key-router-testlab/
 
 # ========================
 # agent-bridge
