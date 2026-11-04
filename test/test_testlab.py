@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import platform
 import time
 from pathlib import Path
 
@@ -24,6 +25,7 @@ MODE = {"sleep": 0.0}
 async def fake_run_cli(cfg, argv, cwd, prompt, chat_key, agent_id, turns):
     CAPTURED["argv"] = list(argv)
     CAPTURED["prompt"] = prompt
+    os_text = f"{platform.system()} {platform.machine()} {platform.release()}"
     if MODE["sleep"]:
         await asyncio.sleep(MODE["sleep"])
 
@@ -42,7 +44,7 @@ async def fake_run_cli(cfg, argv, cwd, prompt, chat_key, agent_id, turns):
         yield {"type": "system", "session_id": "sess-test"}
         yield {
             "type": "assistant",
-            "message": {"content": [{"type": "text", "text": "The image shows a cat. OS: Linux x86_64. Languages: Python."}]},
+            "message": {"content": [{"type": "text", "text": f"The image shows a cat. OS: {os_text}. Languages: Python."}]},
         }
         yield {
             "type": "assistant",
@@ -50,11 +52,11 @@ async def fake_run_cli(cfg, argv, cwd, prompt, chat_key, agent_id, turns):
         }
         yield {
             "type": "user",
-            "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "Linux host x86_64"}]},
+            "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": os_text}]},
         }
         yield {
             "type": "result",
-            "result": "Done. Linux, Python.",
+            "result": f"Done. {os_text}. Python.",
             "is_error": False,
             "duration_ms": 1234,
             "num_turns": 2,
@@ -70,7 +72,7 @@ async def fake_run_cli(cfg, argv, cwd, prompt, chat_key, agent_id, turns):
                 "id": "i1",
                 "type": "command_execution",
                 "command": "uname -a",
-                "aggregated_output": "Linux host x86_64",
+                "aggregated_output": os_text,
                 "exit_code": 0,
                 "status": "completed",
             },
@@ -86,7 +88,7 @@ async def fake_run_cli(cfg, argv, cwd, prompt, chat_key, agent_id, turns):
                 "status": "completed",
             },
         }
-        yield {"type": "item.completed", "item": {"id": "i3", "type": "agent_message", "text": "Linux x86_64. Python is installed."}}
+        yield {"type": "item.completed", "item": {"id": "i3", "type": "agent_message", "text": f"{os_text}. Python is installed."}}
         yield {
             "type": "item.completed",
             "item": {"id": "i4", "type": "file_change", "changes": [{"path": "key-router-test.html", "kind": "add"}]},
@@ -155,7 +157,7 @@ async def test_claude_run_passes_scenario(env):
     assert checks["shell_budget"]["status"] == "pass"
     assert checks["permissions"]["status"] == "pass"
     assert run["shell_count"] == 1
-    assert "Done. Linux, Python." in run["final_text"]
+    assert "Done." in run["final_text"] and "Python" in run["final_text"]
     assert {artifact["name"] for artifact in run["artifacts"]} == {
         testlab.HTML_NAME,
         testlab.MD_NAME,
