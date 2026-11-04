@@ -39,14 +39,50 @@ class ToggleRequest(BaseModel):
     enabled: bool
 
 
+def _project_reason(error: str) -> str:
+    if "allowed_roots is empty" in error:
+        return "no_roots"
+    if "outside allowed_roots" in error:
+        return "outside_roots"
+    if "not a directory" in error:
+        return "not_a_directory"
+    if "must be absolute" in error:
+        return "relative_path"
+    return "invalid"
+
+
 def _project(raw: Optional[str]) -> Tuple[Optional[Path], Dict[str, Any]]:
+    allowed_roots = skills.resolved_allowed_roots()
+    base = {"allowed_roots": allowed_roots}
     if not raw or not raw.strip():
-        return None, {"path": "", "valid": False, "allowed": False, "error": "No project selected"}
+        return None, {
+            **base,
+            "path": "",
+            "valid": False,
+            "allowed": False,
+            "reason": "no_project",
+            "error": "No project selected",
+        }
     try:
         resolved = skills.resolve_project_path(raw)
-        return resolved, {"path": str(resolved), "valid": True, "allowed": True, "error": None}
+        return resolved, {
+            **base,
+            "path": str(resolved),
+            "valid": True,
+            "allowed": True,
+            "reason": None,
+            "error": None,
+        }
     except ValueError as exc:
-        return None, {"path": raw, "valid": False, "allowed": False, "error": str(exc)}
+        error = str(exc)
+        return None, {
+            **base,
+            "path": raw,
+            "valid": False,
+            "allowed": False,
+            "reason": _project_reason(error),
+            "error": error,
+        }
 
 
 def _scope_project(scope: str, raw: Optional[str]) -> Optional[Path]:

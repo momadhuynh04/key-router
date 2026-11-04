@@ -188,6 +188,28 @@ export default function BridgePanel({ settings, agentIds, onSettingsChanged, onS
     }
   }
 
+  const pickFolder = async (): Promise<string | null> => {
+    try {
+      const res = await fetch('/api/browse-folder')
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `HTTP ${res.status}`)
+      return typeof data.path === 'string' && data.path.trim() ? data.path : null
+    } catch (e: any) {
+      setError(e.message || String(e))
+      return null
+    }
+  }
+
+  const browseRoot = async (index: number) => {
+    const path = await pickFolder()
+    if (path) setRoots(rs => rs.map((root, i) => i === index ? path : root))
+  }
+
+  const browseNewRoot = async () => {
+    const path = await pickFolder()
+    if (path) setRoots(rs => rs.includes(path) ? rs : [...rs, path])
+  }
+
   const saveSettings = async () => {
     setBusy(true); setError(""); setSaved(false)
     try {
@@ -403,12 +425,16 @@ export default function BridgePanel({ settings, agentIds, onSettingsChanged, onS
               {roots.map((r, i) => (
                 <div key={i} className="flex gap-2">
                   <input value={r} onChange={e => setRoots(rs => rs.map((x, j) => j === i ? e.target.value : x))} placeholder="/mnt/Data/ProjectStorage" className={inputCls} />
+                  <button onClick={() => browseRoot(i)} className="h-9 shrink-0 rounded-full border border-border bg-surface-850 hover:bg-surface-800 text-text-secondary text-sm font-medium px-4 transition-colors">Browse…</button>
                   <button onClick={() => setRoots(rs => rs.filter((_, j) => j !== i))} aria-label="Remove root" className="text-text-muted hover:text-danger px-2 text-lg">×</button>
                 </div>
               ))}
-              <button onClick={() => setRoots(rs => [...rs, ''])} className="text-sm text-brand hover:text-brand-muted">+ Add root</button>
+              <div className="flex flex-wrap items-center gap-4">
+                <button onClick={() => setRoots(rs => [...rs, ''])} className="text-sm text-brand hover:text-brand-muted">+ Add root</button>
+                <button onClick={browseNewRoot} className="h-8 rounded-full border border-border bg-surface-850 hover:bg-surface-800 text-text-secondary text-xs font-medium px-4 transition-colors">Browse folder</button>
+              </div>
             </div>
-            <p className={hintCls}>Example: <code className="font-mono">/mnt/Data/ProjectStorage</code> allows every project below it.</p>
+            <p className={hintCls}>Use <b>Browse folder</b> to pick one, or type a path. Example: <code className="font-mono">/mnt/Data/ProjectStorage</code> allows every project below it.</p>
           </div>
 
           <div>

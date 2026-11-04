@@ -121,6 +121,49 @@ def test_request_function_call_roundtrip_items():
     assert tool_result["tool_use_id"] == "call_9"
     assert tool_result["content"] == "a.txt\nb.txt"
 
+def test_request_reasoning_before_function_call_becomes_thinking():
+    req = _build_request(
+        input=[
+            {"type": "message", "role": "user",
+             "content": [{"type": "input_text", "text": "list files"}]},
+            {"type": "reasoning",
+             "summary": [{"type": "summary_text", "text": "I should run ls."}]},
+            {"type": "function_call", "id": "fc_1", "call_id": "call_9",
+             "name": "exec_command", "arguments": "{\"cmd\": \"ls\"}"},
+            {"type": "function_call_output", "call_id": "call_9", "output": "a.txt"},
+        ],
+    )
+    result = responses_to_anthropic(req)
+
+    assistant = result.messages[1].content
+    assert assistant[0] == {"type": "thinking", "thinking": "I should run ls."}
+    assert assistant[1]["type"] == "tool_use"
+    assert assistant[1]["id"] == "call_9"
+
+
+def test_request_reasoning_flushes_before_next_user():
+    req = _build_request(
+        input=[
+            {"type": "message", "role": "user",
+             "content": [{"type": "input_text", "text": "hi"}]},
+            {"type": "reasoning",
+             "summary": [{"type": "summary_text", "text": "The user greeted me."}]},
+            {"type": "message", "role": "assistant",
+             "content": [{"type": "output_text", "text": "Hello!"}]},
+            {"type": "message", "role": "user",
+             "content": [{"type": "input_text", "text": "again"}]},
+        ],
+    )
+    result = responses_to_anthropic(req)
+
+    assert [m.role for m in result.messages] == ["user", "assistant", "user"]
+    assert result.messages[1].content == [
+        {"type": "thinking", "thinking": "The user greeted me."},
+        {"type": "text", "text": "Hello!"},
+    ]
+    assert result.messages[2].content == "again"
+
+
 def test_request_non_function_tools_skipped():
     req = _build_request(tools=[
         {"type": "web_search", "external_web_access": False},
@@ -161,6 +204,22 @@ def test_response_object_text_only():
     assert message_item["content"][0]["type"] == "output_text"
     assert message_item["content"][0]["text"] == "PONG"
     assert out["usage"]["total_tokens"] == 14
+
+def test_response_object_thinking_becomes_reasoning_item():
+    out = anthropic_response_to_responses_object(
+        _anthropic_response([
+            {"type": "thinking", "thinking": "I should list the files."},
+            {"type": "text", "text": "Listing"},
+            {"type": "tool_use", "id": "toolu_call_7", "name": "exec_command", "input": {"cmd": "ls"}},
+        ], stop_reason="tool_use"),
+        requested_model="gpt-5-codex")
+
+    types = [i["type"] for i in out["output"]]
+    assert types == ["reasoning", "message", "function_call"]
+    reasoning = out["output"][0]
+    assert reasoning["summary"] == [{"type": "summary_text", "text": "I should list the files."}]
+    assert reasoning["status"] == "completed"
+
 
 def test_response_object_with_function_call():
     out = anthropic_response_to_responses_object(
@@ -243,6 +302,57 @@ async def test_stream_text_full_event_lifecycle():
     assert completed["response"]["output"][0]["content"][0]["text"] == "PONG"
     assert completed["response"]["usage"]["input_tokens"] == 6
     assert completed["response"]["usage"]["total_tokens"] == 7
+
+@pytest.mark.asyncio
+async def test_stream_thinking_reasoning_lifecycle():
+    events = [
+        SSEEvent(event="message_start", data={
+            "type": "message_start",
+            "message": {"id": "m", "usage": {"input_tokens": 4}}
+        }),
+        SSEEvent(event="content_block_start", data={
+            "type": "content_block_start", "index": 0,
+            "content_block": {"type": "thinking", "thinking": ""}
+        }),
+        SSEEvent(event="content_block_delta", data={
+            "type": "content_block_delta", "index": 0,
+            "delta": {"type": "thinking_delta", "thinking": "I should "}
+        }),
+        SSEEvent(event="content_block_delta", data={
+            "type": "content_block_delta", "index": 0,
+            "delta": {"type": "thinking_delta", "thinking": "run ls."}
+        }),
+        SSEEvent(event="content_block_stop", data={"type": "content_block_stop", "index": 0}),
+        SSEEvent(event="content_block_start", data={
+            "type": "content_block_start", "index": 1,
+            "content_block": {"type": "tool_use", "id": "toolu_call_ab", "name": "exec_command", "input": {}}
+        }),
+        SSEEvent(event="content_block_delta", data={
+            "type": "content_block_delta", "index": 1,
+            "delta": {"type": "input_json_delta", "partial_json": '{"cmd":"ls"}'}
+        }),
+        SSEEvent(event="content_block_stop", data={"type": "content_block_stop", "index": 1}),
+        SSEEvent(event="message_delta", data={
+            "type": "message_delta",
+            "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 3}
+        }),
+        SSEEvent(event="message_stop", data={"type": "message_stop"}),
+    ]
+
+    _, parsed = await _collect(events)
+    names = [n for n, _ in parsed]
+    assert "response.reasoning_summary_part.added" in names
+    assert "response.reasoning_summary_text.delta" in names
+    assert "response.reasoning_summary_text.done" in names
+
+    deltas = "".join(p["delta"] for n, p in parsed if n == "response.reasoning_summary_text.delta")
+    assert deltas == "I should run ls."
+
+    completed = dict((n, p) for n, p in parsed)["response.completed"]
+    types = [i["type"] for i in completed["response"]["output"]]
+    assert types == ["reasoning", "function_call"]
+    assert completed["response"]["output"][0]["summary"][0]["text"] == "I should run ls."
+
 
 @pytest.mark.asyncio
 async def test_stream_function_call_event_lifecycle():

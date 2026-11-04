@@ -187,14 +187,25 @@ def test_project_path_symlink_escape_rejected(allowed):
         outside.rmdir()
 
 
+def test_project_path_error_lists_roots_and_fix(allowed):
+    outside = allowed.parent / f"{allowed.name}-outside"
+    with pytest.raises(ValueError, match="outside allowed_roots") as exc:
+        skills.resolve_project_path(str(outside))
+    message = str(exc.value)
+    assert str(allowed.resolve()) in message
+    assert "Agents" in message
+    assert "Bridge settings" in message
+
+
 def test_project_path_requires_roots(allowed, monkeypatch):
     agents = allowed / "empty-agents.json"
     agents.write_text(json.dumps({"token": "t", "allowed_roots": []}), encoding="utf-8")
     monkeypatch.setattr("bridge.config.AGENTS_PATH", agents)
     project = allowed / "proj"
     project.mkdir()
-    with pytest.raises(ValueError, match="allowed_roots is empty"):
+    with pytest.raises(ValueError, match="allowed_roots is empty") as exc:
         skills.resolve_project_path(str(project))
+    assert "Bridge settings" in str(exc.value)
 
 
 def test_parse_source_and_skill(tmp_path):

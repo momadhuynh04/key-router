@@ -54,6 +54,95 @@ def test_api_session_chat_generate_success(mock_get_provider):
     assert data["content"][0]["text"] == "Success"
     assert data["role"] == "assistant"
 
+@patch('proxy.server.provider_router.get_provider')
+def test_api_folds_system_role_messages(mock_get_provider):
+    """Claude Code sends context as a role=system message; it must become top-level system."""
+    from models.anthropic import AnthropicResponse, AnthropicUsage
+
+    mock_provider = AsyncMock()
+    seen = []
+
+    async def mock_translate(req, *args, **kwargs):
+        seen.append(req)
+        return {"translated": True}
+
+    async def mock_generate(*args, **kwargs):
+        return AnthropicResponse(
+            id="msg_test",
+            model="claude-sonnet-5-5",
+            content=[{"type": "text", "text": "ok"}],
+            stop_reason="end_turn",
+            usage=AnthropicUsage(input_tokens=1, output_tokens=1),
+        )
+
+    mock_provider.translate_request = mock_translate
+    mock_provider.generate = mock_generate
+    mock_get_provider.return_value = mock_provider
+
+    payload = {
+        "model": "claude-sonnet-5-5",
+        "system": [{"type": "text", "text": "base system"}],
+        "messages": [
+            {"role": "user", "content": "hi"},
+            {"role": "system", "content": [{"type": "text", "text": "Environment: /repo"}]},
+            {"role": "system", "content": "Second system note"},
+        ],
+        "stream": False,
+    }
+
+    response = client.post("/v1/messages", json=payload)
+    assert response.status_code == 200
+    assert response.json()["content"][0]["text"] == "ok"
+
+    request = seen[0]
+    assert [m.role for m in request.messages] == ["user"]
+    assert request.messages[0].content == "hi"
+    assert request.system[0]["text"] == "base system"
+    folded = "\n\n".join(block.get("text", "") for block in request.system[1:])
+    assert "Environment: /repo" in folded
+    assert "Second system note" in folded
+
+
+@patch('proxy.server.provider_router.get_provider')
+def test_api_strips_thinking_display(mock_get_provider):
+    """Claude Code's thinking.display beta hint is rejected by strict Anthropic gateways."""
+    from models.anthropic import AnthropicResponse, AnthropicUsage
+
+    mock_provider = AsyncMock()
+    seen = []
+
+    async def mock_translate(req, *args, **kwargs):
+        seen.append(req)
+        return {"translated": True}
+
+    async def mock_generate(*args, **kwargs):
+        return AnthropicResponse(
+            id="msg_test",
+            model="claude-haiku-5-5",
+            content=[{"type": "text", "text": "ok"}],
+            stop_reason="end_turn",
+            usage=AnthropicUsage(input_tokens=1, output_tokens=1),
+        )
+
+    mock_provider.translate_request = mock_translate
+    mock_provider.generate = mock_generate
+    mock_get_provider.return_value = mock_provider
+
+    payload = {
+        "model": "claude-haiku-5-5",
+        "thinking": {"type": "adaptive", "display": "updates"},
+        "messages": [{"role": "user", "content": "hi"}],
+        "stream": False,
+    }
+
+    response = client.post("/v1/messages", json=payload)
+    assert response.status_code == 200
+
+    thinking = seen[0].thinking
+    assert thinking.type == "adaptive"
+    assert "display" not in thinking.model_dump(exclude_none=True)
+
+
 # ----------------------------------------
 # 2. Test Logging & Error Handling
 # ----------------------------------------

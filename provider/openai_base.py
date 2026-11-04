@@ -62,7 +62,7 @@ def _anthropic_content_to_openai(role: str, content: Any) -> List[Dict[str, Any]
                 "content": result_content
             })
 
-    if role == "assistant" and (text_parts or thinking_parts or tool_calls):
+    if role == "assistant" and (text_parts or tool_calls):
         msg: Dict[str, Any] = {"role": "assistant"}
         # THINKING OFF: không gửi reasoning_content nữa — DeepSeek V4 lỗi khi echo
         msg["content"] = "\n".join(text_parts) if text_parts else ""

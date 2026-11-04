@@ -204,6 +204,13 @@ python -m cli remove-provider my
 python -m cli list-models my
 ```
 
+`provider_api` selects the upstream protocol: `openai_compatible` calls `/chat/completions`,
+`anthropic` calls `/v1/messages`. Models listed under `anthropic` must be supported by that
+endpoint (DeepSeek/GLM models are usually OpenAI-only, so register those as OpenAI Compatible).
+key-router normalizes Claude Code's newer beta fields (`role: "system"` messages,
+`thinking.display`) but does not forward the client's `anthropic-beta` header — add it in the
+provider's **Headers** field if an upstream requires a specific beta list.
+
 `GET /api/custom-providers` only returns `has_key`, never the raw key.
 
 ### 3. Launch
@@ -288,8 +295,11 @@ have no interactive prompt: anything that would ask is **denied instead**, and t
   step, using the official `npx skills ... --copy` flow.
 - **Installed** shows user/project skills plus read-only system/plugin skills. Expand a row to preview
   `SKILL.md`; toggle to move the skill to `<root>/.disabled/` (the CLIs stop discovering it).
-- Project scope is fenced by `allowed_roots` from `agents.json`; add the project root in the **Agents**
-  tab first. Global scope writes only to the known provider roots above.
+- Project scope is fenced by `allowed_roots` from `agents.json`. Add the project root in
+  **Agents → Bridge settings → Safety fence → Allowed roots** (use **Browse folder** or type the
+  path), then save. A folder outside those
+  roots cannot be used for project scope — the panel lists the configured roots and how to fix it.
+  Global scope writes only to the known provider roots above.
 - Marketplace installs require **Node 22.20+** and `npx`. key-router copies files and **never executes**
   a skill; skills are third-party instructions/scripts with the agent's permissions — review before use.
 - `npx skills` telemetry is disabled for installs; the CLI version is pinned to `skills@1.7.0`
@@ -540,7 +550,7 @@ session của sub-agent đó.
 
 Tool call, danh sách bị chặn quyền, cost và thời gian đều hiện ngay trong câu trả lời. Quyền đặt theo từng agent: `plan` (chỉ đọc), `edit` (sửa trong workdir), `auto`, `ci`, `bypass` (chỉ khi bật `allow_bypass`). Chạy headless không có prompt tương tác — thứ gì cần hỏi thì **bị từ chối luôn** và hiện lý do trong chat.
 
-**Quản lý skills:** tab **Launcher → Skills** (không thêm tab mới). Chọn **Claude Code** hoặc **Codex**, phạm vi **Global** / **Project**, rồi **Installed** hoặc **Browse**. Browse tìm trên marketplace skills.sh; Install có thể ghi cho cả 2 provider bằng `npx skills --copy`. Project scope chỉ cho phép trong `allowed_roots` (thêm root ở tab Agents trước). Nút toggle chuyển skill vào `<root>/.disabled/` để CLI thật sự không thấy; skill hệ thống/plugin/symlink là read-only. Cài marketplace cần **Node 22.20+** và `npx`; key-router chỉ copy file, **không chạy** skill — chỉ cài nguồn tin cậy.
+**Quản lý skills:** tab **Launcher → Skills** (không thêm tab mới). Chọn **Claude Code** hoặc **Codex**, phạm vi **Global** / **Project**, rồi **Installed** hoặc **Browse**. Browse tìm trên marketplace skills.sh; Install có thể ghi cho cả 2 provider bằng `npx skills --copy`. Project scope chỉ cho phép trong `allowed_roots` (thêm root ở **Agents → Bridge settings → Safety fence → Allowed roots** rồi Save; thư mục ngoài các root này sẽ bị chặn và panel hiển thị lý do cùng cách sửa). Nút toggle chuyển skill vào `<root>/.disabled/` để CLI thật sự không thấy; skill hệ thống/plugin/symlink là read-only. Cài marketplace cần **Node 22.20+** và `npx`; key-router chỉ copy file, **không chạy** skill — chỉ cài nguồn tin cậy.
 
 **Gặp lỗi:** IDE không hiện → chạy `detect-ide.bat` / `./detect-ide.sh`, kiểm tra `where code` / `which code` có trong PATH không.
 

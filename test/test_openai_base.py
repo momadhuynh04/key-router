@@ -33,6 +33,23 @@ def test_anthropic_content_to_openai_image():
         ],
     }]
 
+def test_anthropic_content_to_openai_drops_thinking_only_assistant():
+    result = _anthropic_content_to_openai(
+        "assistant", [{"type": "thinking", "thinking": "internal reasoning"}]
+    )
+    assert result == []
+
+
+def test_anthropic_content_to_openai_keeps_tool_use_with_thinking():
+    result = _anthropic_content_to_openai("assistant", [
+        {"type": "thinking", "thinking": "internal reasoning"},
+        {"type": "tool_use", "id": "toolu_1", "name": "exec", "input": {"cmd": "ls"}},
+    ])
+    assert len(result) == 1
+    assert result[0]["content"] == ""
+    assert result[0]["tool_calls"][0]["function"]["name"] == "exec"
+
+
 def test_anthropic_content_to_openai_tool_use():
     content = [{
         "type": "tool_use",

@@ -397,12 +397,19 @@ def validate_source(source: str, skill: str = "") -> None:
         pass
     elif is_local:
         resolved = Path(source).expanduser().resolve()
-        cfg = ensure_config()
-        roots = [Path(root).expanduser().resolve() for root in cfg.allowed_roots]
+        roots = _resolved_root_paths()
         if not roots:
-            raise ValueError("allowed_roots is empty — add a root in the Agents tab")
+            raise ValueError(
+                "allowed_roots is empty — open the dashboard, go to Agents → Bridge settings → "
+                "Safety fence → Allowed roots, and add at least one folder."
+            )
         if not any(resolved == root or resolved.is_relative_to(root) for root in roots):
-            raise ValueError(f"local source {resolved} is outside allowed_roots")
+            allowed = ", ".join(str(root) for root in roots)
+            raise ValueError(
+                f"local source {resolved} is outside allowed_roots ({allowed}). "
+                "Move it inside an allowed root or add that folder in Agents → Bridge settings → "
+                "Safety fence → Allowed roots."
+            )
         if not resolved.is_dir():
             raise ValueError(f"local source must be a directory: {resolved}")
     else:
@@ -421,6 +428,26 @@ def validate_source(source: str, skill: str = "") -> None:
             raise ValueError("skill name contains control characters")
 
 
+def resolved_allowed_roots() -> List[str]:
+    """Allowed roots from `agents.json`, resolved for display in the dashboard."""
+    try:
+        cfg = ensure_config()
+    except Exception:
+        return []
+    roots: List[str] = []
+    for root in cfg.allowed_roots:
+        try:
+            roots.append(str(Path(root).expanduser().resolve()))
+        except OSError:
+            roots.append(str(Path(root).expanduser()))
+    return roots
+
+
+def _resolved_root_paths() -> List[Path]:
+    cfg = ensure_config()
+    return [Path(root).expanduser().resolve() for root in cfg.allowed_roots]
+
+
 def resolve_project_path(raw: str) -> Path:
     if not raw or not raw.strip():
         raise ValueError("project path is required for project scope")
@@ -431,12 +458,19 @@ def resolve_project_path(raw: str) -> Path:
         resolved = path.resolve()
     except OSError as exc:
         raise ValueError(f"invalid project path: {exc}") from exc
-    cfg = ensure_config()
-    roots = [Path(root).expanduser().resolve() for root in cfg.allowed_roots]
+    roots = _resolved_root_paths()
     if not roots:
-        raise ValueError("allowed_roots is empty — add a root in the Agents tab")
+        raise ValueError(
+            "allowed_roots is empty — open the dashboard, go to Agents → Bridge settings → "
+            "Safety fence → Allowed roots, and add at least one folder."
+        )
     if not any(resolved == root or resolved.is_relative_to(root) for root in roots):
-        raise ValueError(f"project path {resolved} is outside allowed_roots")
+        allowed = ", ".join(str(root) for root in roots)
+        raise ValueError(
+            f"project path {resolved} is outside allowed_roots ({allowed}). "
+            "Add this folder (or a parent folder) in Agents → Bridge settings → "
+            "Safety fence → Allowed roots, then Save settings."
+        )
     if not resolved.is_dir():
         raise ValueError(f"not a directory: {resolved}")
     return resolved

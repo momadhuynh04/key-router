@@ -34,7 +34,10 @@ def _build_typer_app():
     def add_provider(
         id: str = typer.Option(..., "--id", help="Provider ID (lowercase, 2-32 chars)"),
         display_name: str = typer.Option(..., "--display-name", help="Display name"),
-        api: str = typer.Option("openai_compatible", "--api", help="openai_compatible or anthropic"),
+        api: str = typer.Option(
+            "openai_compatible", "--api",
+            help="openai_compatible (/chat/completions) or anthropic (/v1/messages — models must be supported there)",
+        ),
         base_url: str = typer.Option(..., "--base-url", help="Base URL e.g. https://api.example.com/v1"),
         api_key_env: str = typer.Option(None, "--api-key-env", help="ENV var name for API key"),
         api_key: str = typer.Option(None, "--api-key", help="Alias for --api-key-env (ENV var name)"),

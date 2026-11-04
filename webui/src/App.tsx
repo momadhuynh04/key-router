@@ -463,7 +463,7 @@ function App() {
                 </button>
               </div>
             </div>
-            <SkillsPanel projectPath={launchMode === 'local' ? localPath : ''} />
+            <SkillsPanel projectPath={launchMode === 'local' ? localPath : ''} onOpenSettings={() => setActiveTab('agents')} />
             </div>
           )}
 

@@ -292,12 +292,31 @@ def responses_to_anthropic(req: ResponsesRequest) -> AnthropicRequest:
         system_parts.append(req.instructions)
 
     messages: List[Message] = []
+    pending_thinking: List[str] = []
+
+    def flush_pending_thinking():
+        """Attach orphan reasoning to the previous assistant message, or before the next user."""
+        if not pending_thinking:
+            return
+        thinking_blocks = [{"type": "thinking", "thinking": t} for t in pending_thinking]
+        pending_thinking.clear()
+        if messages and messages[-1].role == "assistant":
+            last = messages[-1]
+            if isinstance(last.content, str):
+                last.content = thinking_blocks + (
+                    [{"type": "text", "text": last.content}] if last.content else []
+                )
+            elif isinstance(last.content, list):
+                last.content = thinking_blocks + last.content
+            return
+        messages.append(Message(role="assistant", content=thinking_blocks))
 
     def add_system(text: str):
         if text:
             system_parts.append(text)
 
     def add_user(content: Any):
+        flush_pending_thinking()
         if isinstance(content, str):
             if content:
                 messages.append(Message(role="user", content=content))
@@ -322,8 +341,6 @@ def responses_to_anthropic(req: ResponsesRequest) -> AnthropicRequest:
         pending_tools.extend(req.additional_tools or [])
     if extra_tools.get("additional_tools"):
         pending_tools.extend(extra_tools["additional_tools"] or [])
-
-    pending_thinking: List[str] = []
 
     items = req.input
     if isinstance(items, str):
@@ -390,17 +407,11 @@ def responses_to_anthropic(req: ResponsesRequest) -> AnthropicRequest:
             elif item_type == "additional_tools":
                 pending_tools.extend(item.get("tools", []) or [])
             else:
-                if pending_thinking:
-                    for t in pending_thinking:
-                        messages.append(Message(role="assistant", content=[{"type": "thinking", "thinking": t}]))
-                    pending_thinking.clear()
+                flush_pending_thinking()
 
             # other types → flush orphan thinking above, ignored
 
-    if pending_thinking:
-        for t in pending_thinking:
-            messages.append(Message(role="assistant", content=[{"type": "thinking", "thinking": t}]))
-        pending_thinking.clear()
+    flush_pending_thinking()
 
     all_tools: List[Dict[str, Any]] = []
     all_tools.extend(req.tools or [])
@@ -440,6 +451,28 @@ def _safe_arguments(raw: Any) -> Dict[str, Any]:
 # Response object translation: Anthropic → Responses
 # ---------------------------------------------------------------------------
 
+def _clean_thinking_text(raw: Any) -> str:
+    """Strip ` thinking` tags and surrounding whitespace from a thinking block."""
+    if not isinstance(raw, str) or not raw.strip():
+        return ""
+    cleaned = re.sub(r" thinking.*?</think>", "", raw, flags=re.DOTALL | re.IGNORECASE)
+    if " response" in raw:
+        _, _, tail = raw.partition("</think>")
+        cleaned = tail.strip() or cleaned
+    return cleaned.strip()
+
+
+def _clean_thinking_delta(raw: Any) -> str:
+    """Like `_clean_thinking_text`, but keep spaces between streamed deltas."""
+    if not isinstance(raw, str) or not raw:
+        return ""
+    cleaned = re.sub(r" thinking.*?</think>", "", raw, flags=re.DOTALL | re.IGNORECASE)
+    if " response" in raw:
+        _, _, tail = raw.partition(" response")
+        cleaned = tail or cleaned
+    return cleaned
+
+
 def _content_blocks_to_output_items(content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     text_buffer: List[str] = []
@@ -462,13 +495,15 @@ def _content_blocks_to_output_items(content: List[Dict[str, Any]]) -> List[Dict[
     for block in content:
         block_type = block.get("type")
         if block_type == "thinking":
-            thinking_text = block.get("thinking", "") or block.get("text", "")
-            if thinking_text and thinking_text.strip():
-                import re as _re_gc
-                cleaned = _re_gc.sub(r"<think>.*?</think>", "", thinking_text, flags=_re_gc.DOTALL | _re_gc.IGNORECASE).strip()
-                raw = cleaned if cleaned else thinking_text.strip()
-                if raw:
-                    text_buffer.append(raw)
+            cleaned = _clean_thinking_text(block.get("thinking", "") or block.get("text", ""))
+            if cleaned:
+                flush_text()
+                items.append({
+                    "type": "reasoning",
+                    "id": _new_item_id("rs"),
+                    "summary": [{"type": "summary_text", "text": cleaned}],
+                    "status": "completed",
+                })
             continue
         if block_type == "text" and block.get("text"):
             raw_text = block.get("text", "")
@@ -522,7 +557,13 @@ def anthropic_response_to_responses_object(
             })
 
     truncated = resp.stop_reason in ("max_tokens", "length")
-    empty_no_tool = len(output) == 1 and output[0]["type"] == "message" and not output[0]["content"][0]["text"].strip() and tool_schemas
+    has_tool_call = any(item.get("type") == "function_call" for item in output)
+    message_text = "\n".join(
+        part.get("text", "")
+        for item in output if item.get("type") == "message"
+        for part in item.get("content", [])
+    ).strip()
+    empty_no_tool = bool(tool_schemas) and not has_tool_call and not message_text
     if truncated or empty_no_tool:
         if empty_no_tool:
             log_warn(f"[⚠️] Empty output with tools offered — marking incomplete (likely truncated)")
@@ -638,38 +679,33 @@ async def anthropic_events_to_responses_stream(
             block = data.get("content_block", {})
             block_type = block.get("type")
             if block_type == "thinking":
-                thinking_raw = block.get("thinking", "") or block.get("text", "")
-                if thinking_raw and thinking_raw.strip():
-                    import re as _re_th
-                    cleaned = _re_th.sub(r"<think>.*?</think>", "", thinking_raw, flags=_re_th.DOTALL | _re_th.IGNORECASE).strip()
-                    if "</think>" in thinking_raw:
-                        _, _, tail = thinking_raw.partition("</think>")
-                        cleaned = tail.strip() or cleaned
-                    if cleaned:
-                        index = state.next_output_index()
-                        state.item_type = "message"
-                        state.item_id = _new_item_id("msg")
-                        state.text_buffer = cleaned
-                        header = {
-                            "type": "message", "id": state.item_id,
-                            "role": "assistant", "status": "in_progress", "content": []
-                        }
-                        state.item_header = header
-                        yield _sse("response.output_item.added", {
-                            "type": "response.output_item.added",
-                            "sequence_number": seq, "output_index": index, "item": header,
-                        }); seq += 1
-                        yield _sse("response.content_part.added", {
-                            "type": "response.content_part.added",
-                            "sequence_number": seq, "item_id": state.item_id,
-                            "output_index": index, "content_index": 0,
-                            "part": {"type": "output_text", "text": "", "annotations": []},
-                        }); seq += 1
-                        yield _sse("response.output_text.delta", {
-                            "type": "response.output_text.delta",
-                            "sequence_number": seq, "item_id": state.item_id,
-                            "output_index": index, "content_index": 0, "delta": cleaned,
-                        }); seq += 1
+                cleaned = _clean_thinking_text(block.get("thinking", "") or block.get("text", ""))
+                index = state.next_output_index()
+                state.item_type = "reasoning"
+                state.item_id = _new_item_id("rs")
+                state.text_buffer = ""
+                header = {
+                    "type": "reasoning", "id": state.item_id,
+                    "summary": [], "status": "in_progress",
+                }
+                state.item_header = header
+                yield _sse("response.output_item.added", {
+                    "type": "response.output_item.added",
+                    "sequence_number": seq, "output_index": index, "item": header,
+                }); seq += 1
+                yield _sse("response.reasoning_summary_part.added", {
+                    "type": "response.reasoning_summary_part.added",
+                    "sequence_number": seq, "item_id": state.item_id,
+                    "output_index": index, "summary_index": 0,
+                    "part": {"type": "summary_text", "text": ""},
+                }); seq += 1
+                if cleaned:
+                    state.text_buffer = cleaned
+                    yield _sse("response.reasoning_summary_text.delta", {
+                        "type": "response.reasoning_summary_text.delta",
+                        "sequence_number": seq, "item_id": state.item_id,
+                        "output_index": index, "summary_index": 0, "delta": cleaned,
+                    }); seq += 1
                 continue
             index = state.next_output_index()
 
@@ -713,26 +749,21 @@ async def anthropic_events_to_responses_stream(
             delta = data.get("delta", {})
             delta_type = delta.get("type")
             if delta_type == "thinking_delta":
-                thinking_delta = delta.get("thinking", "") or delta.get("text", "") or ""
-                if thinking_delta and thinking_delta.strip():
-                    import re as _re_td
-                    cleaned_td = _re_td.sub(r"<think>.*?</think>", "", thinking_delta, flags=_re_td.DOTALL | _re_td.IGNORECASE)
-                    if "</think>" in thinking_delta:
-                        _, _, tail_td = thinking_delta.partition("</think>")
-                        cleaned_td = tail_td or cleaned_td
-                    cleaned_td = cleaned_td.strip()
-                    if cleaned_td:
-                        if state.item_type != "message":
-                            idx_td = state.next_output_index()
-                            state.item_type = "message"
-                            state.item_id = _new_item_id("msg")
-                            state.text_buffer = ""
-                            hdr_td = {"type": "message", "id": state.item_id, "role": "assistant", "status": "in_progress", "content": []}
-                            state.item_header = hdr_td
-                            yield _sse("response.output_item.added", {"type": "response.output_item.added", "sequence_number": seq, "output_index": idx_td, "item": hdr_td}); seq += 1
-                            yield _sse("response.content_part.added", {"type": "response.content_part.added", "sequence_number": seq, "item_id": state.item_id, "output_index": idx_td, "content_index": 0, "part": {"type": "output_text", "text": "", "annotations": []}}); seq += 1
-                        state.text_buffer += cleaned_td
-                        yield _sse("response.output_text.delta", {"type": "response.output_text.delta", "sequence_number": seq, "item_id": state.item_id, "output_index": state.output_index, "content_index": 0, "delta": cleaned_td}); seq += 1
+                cleaned_td = _clean_thinking_delta(
+                    delta.get("thinking", "") or delta.get("text", "") or ""
+                )
+                if cleaned_td:
+                    if state.item_type != "reasoning":
+                        idx_td = state.next_output_index()
+                        state.item_type = "reasoning"
+                        state.item_id = _new_item_id("rs")
+                        state.text_buffer = ""
+                        hdr_td = {"type": "reasoning", "id": state.item_id, "summary": [], "status": "in_progress"}
+                        state.item_header = hdr_td
+                        yield _sse("response.output_item.added", {"type": "response.output_item.added", "sequence_number": seq, "output_index": idx_td, "item": hdr_td}); seq += 1
+                        yield _sse("response.reasoning_summary_part.added", {"type": "response.reasoning_summary_part.added", "sequence_number": seq, "item_id": state.item_id, "output_index": idx_td, "summary_index": 0, "part": {"type": "summary_text", "text": ""}}); seq += 1
+                    state.text_buffer += cleaned_td
+                    yield _sse("response.reasoning_summary_text.delta", {"type": "response.reasoning_summary_text.delta", "sequence_number": seq, "item_id": state.item_id, "output_index": state.output_index, "summary_index": 0, "delta": cleaned_td}); seq += 1
                 continue
             index = state.output_index
 
@@ -777,6 +808,23 @@ async def anthropic_events_to_responses_stream(
                 done_item = {
                     "type": "message", "id": state.item_id, "status": "completed",
                     "role": "assistant", "content": [final_part]
+                }
+            elif state.item_type == "reasoning":
+                final_text = state.text_buffer.strip()
+                final_part = {"type": "summary_text", "text": final_text}
+                yield _sse("response.reasoning_summary_text.done", {
+                    "type": "response.reasoning_summary_text.done",
+                    "sequence_number": seq, "item_id": state.item_id,
+                    "output_index": index, "summary_index": 0, "text": final_text,
+                }); seq += 1
+                yield _sse("response.reasoning_summary_part.done", {
+                    "type": "response.reasoning_summary_part.done",
+                    "sequence_number": seq, "item_id": state.item_id,
+                    "output_index": index, "summary_index": 0, "part": final_part,
+                }); seq += 1
+                done_item = {
+                    "type": "reasoning", "id": state.item_id,
+                    "summary": [final_part], "status": "completed",
                 }
             elif state.item_type == "function_call":
                 final_args = state.args_buffer
@@ -861,7 +909,11 @@ async def anthropic_events_to_responses_stream(
 
     truncated = bool(getattr(state, "_truncated", False))
     # empty output with tools = likely truncation even if no explicit flag
-    if not truncated and state.tool_schemas and not state.collected_items:
+    has_payload = any(
+        item.get("type") in ("message", "function_call")
+        for item in state.collected_items
+    )
+    if not truncated and state.tool_schemas and not has_payload:
         truncated = True
     status = "incomplete" if truncated else "completed"
     final = state.final_response(status=status)

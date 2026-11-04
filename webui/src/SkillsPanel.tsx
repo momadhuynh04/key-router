@@ -20,7 +20,14 @@ type Skill = {
   duplicate_paths: string[]
 }
 
-type ProjectInfo = { path: string; valid: boolean; allowed: boolean; error: string | null }
+type ProjectInfo = {
+  path: string
+  valid: boolean
+  allowed: boolean
+  reason: string | null
+  error: string | null
+  allowed_roots: string[]
+}
 type ProviderEnvironment = { detected: boolean; roots: string[] }
 type Environment = {
   node: { version: string | null; ok: boolean; required: string }
@@ -70,7 +77,7 @@ function skillKey(provider: Provider, scope: Scope, skill: Skill) {
   return `${provider}:${scope}:${skill.id}:${skill.path}`
 }
 
-export default function SkillsPanel({ projectPath = '' }: { projectPath?: string }) {
+export default function SkillsPanel({ projectPath = '', onOpenSettings }: { projectPath?: string; onOpenSettings?: () => void }) {
   const project = projectPath.trim()
   const [collapsed, setCollapsed] = useState(false)
   const [provider, setProvider] = useState<Provider>('claude')
@@ -326,8 +333,9 @@ export default function SkillsPanel({ projectPath = '' }: { projectPath?: string
       {!collapsed && (
         <>
           <p className="text-sm text-text-secondary leading-relaxed max-w-3xl mt-2">
-            Install and manage skills for Claude Code and Codex. Project skills live in the selected project;
-            global skills apply everywhere. key-router copies files and never executes a skill.
+            Install and manage skills for Claude Code and Codex. Project skills live in the selected project
+            and stay inside the <b>Allowed roots</b> safety fence; global skills apply everywhere.
+            key-router copies files and never executes a skill.
           </p>
 
           <div className="flex flex-wrap items-center gap-2 mt-4">
@@ -351,7 +359,13 @@ export default function SkillsPanel({ projectPath = '' }: { projectPath?: string
               <button
                 onClick={() => setScope('project')}
                 disabled={!project}
-                title={project ? undefined : 'Set a project folder above first'}
+                title={
+                  !project
+                    ? 'Set a project folder above first'
+                    : data && !projectValid
+                      ? 'This folder is outside allowed_roots — see the notice below'
+                      : undefined
+                }
                 className={`${pillCls(scope === 'project')} ${!project ? 'opacity-40 cursor-not-allowed' : ''}`}
               >
                 Project
@@ -369,8 +383,68 @@ export default function SkillsPanel({ projectPath = '' }: { projectPath?: string
             </div>
           )}
           {project && data && !projectValid && (
-            <div className="text-xs text-accent rounded-lg bg-accent-bg border border-accent-border p-3 mt-4">
-              Project scope unavailable: {data.project.error}
+            <div className="rounded-xl border border-accent-border bg-accent-bg p-4 mt-4 text-xs leading-relaxed text-text-secondary">
+              <p className="text-sm font-semibold text-accent">Project scope is unavailable for this folder</p>
+              <p className="mt-2">
+                Project skills are read from and installed into the selected folder
+                (<code className="font-mono">.claude/skills</code> for Claude Code,
+                <code className="font-mono"> .agents/skills</code> for Codex). key-router only touches folders
+                inside <b>Allowed roots</b> — the same safety fence that limits agent workdirs, so a typo or
+                symlink cannot point the proxy at an unrelated directory.
+              </p>
+
+              {data.project.reason === 'outside_roots' && (
+                <>
+                  <p className="mt-2 break-all">
+                    <span className="text-text-muted">Selected folder:</span>{' '}
+                    <code className="font-mono">{project}</code>
+                  </p>
+                  <p className="mt-2">Allowed roots:</p>
+                  {data.project.allowed_roots.length > 0 ? (
+                    <ul className="mt-1 list-disc pl-5 font-mono break-all">
+                      {data.project.allowed_roots.map(root => <li key={root}>{root}</li>)}
+                    </ul>
+                  ) : (
+                    <p className="mt-1 italic">None configured.</p>
+                  )}
+                </>
+              )}
+
+              {data.project.reason === 'no_roots' && (
+                <p className="mt-2">
+                  <b>No allowed roots are configured</b>, so project scope is disabled everywhere.
+                </p>
+              )}
+
+              {data.project.reason === 'not_a_directory' && (
+                <p className="mt-2">That path does not exist or is not a folder. Pick an existing project folder above.</p>
+              )}
+
+              {data.project.reason === 'relative_path' && (
+                <p className="mt-2">Project folders must be absolute paths, e.g. <code className="font-mono">/mnt/Data/projects/app</code>.</p>
+              )}
+
+              {!['outside_roots', 'no_roots', 'not_a_directory', 'relative_path'].includes(data.project.reason || '') && (
+                <p className="mt-2 break-all">{data.project.error}</p>
+              )}
+
+              {(data.project.reason === 'outside_roots' || data.project.reason === 'no_roots') && (
+                <>
+                  <p className="mt-3">
+                    <b>To enable project skills:</b> open <b>Agents → Bridge settings → Safety fence → Allowed roots</b>,
+                    add this folder (or a parent folder), then <b>Save settings</b> and press <b>Refresh</b> here.
+                    Global skills keep working either way.
+                  </p>
+                  {onOpenSettings && (
+                    <button
+                      onClick={onOpenSettings}
+                      className="mt-3 h-8 rounded-full border border-accent-border bg-surface-900 hover:bg-surface-800 text-accent text-xs font-medium px-4 transition-colors"
+                    >
+                      Open Bridge settings
+                    </button>
+                  )}
+                </>
+              )}
             </div>
           )}
           {notice && <div className="text-xs text-success rounded-lg bg-success/10 border border-success/20 p-3 mt-4">{notice}</div>}

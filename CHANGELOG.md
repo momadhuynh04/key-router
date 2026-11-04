@@ -7,7 +7,51 @@ matching section here. Releases before 0.1.32 are tracked in git history (`git l
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **Browse for allowed roots** — the Safety fence in **Agents → Bridge settings** now has a
+  **Browse folder** button that appends the picked folder, and a **Browse…** button on each row
+  to replace it. It uses the same native folder picker as the launcher.
+- **Provider API hint** — the Add custom provider modal now explains that `Anthropic` uses
+  `/v1/messages` (only models that endpoint supports, e.g. use OpenAI Compatible for
+  DeepSeek/OSS models), while `OpenAI Compatible` uses `/chat/completions`.
+
+### Changed
+
+- **Add custom provider validation** — when **Submit** is disabled, the modal now lists
+  every blocking field (invalid ID, Base URL without `http(s)://`, missing model, …) instead
+  of leaving the button greyed out silently. The Base URL hint shows which endpoint is
+  called (`<base>/v1/messages` or `<base>/chat/completions`).
+- **Agent guide rewritten** — `AGENTS.md` now documents the architecture, module map,
+  invariants, testing rules, recipes and release checklist; `CLAUDE.md` imports it.
+
+### Fixed
+
+- **Claude Code `role: "system"` messages no longer break Anthropic-native providers** —
+  Claude Code ≥ 2.1.3xx sends its Environment/context block as `messages[1].role = "system"`.
+  Anthropic upstreams that only accept `user | assistant` rejected the whole request with
+  `Invalid discriminator value. Expected 'user' | 'assistant' at messages.N.role`. The proxy
+  now folds every system-role message into the top-level `system` prompt before translation,
+  so native Anthropic providers, DeepSeek `/anthropic`, and the OpenAI-compatible path all
+  keep the context.
+- **`Invalid input at thinking` on follow-up requests** — Claude Code ≥ 2.1.3xx sends
+  `thinking: {"type": "adaptive", "display": "updates"}`. The `display` beta hint makes
+  strict Anthropic gateways reject the request with `Invalid input at thinking`, so the
+  proxy now drops it (`proxy/routers/anthropic.py::_strip_thinking_display`). The thinking
+  mode itself is preserved; only the rendering hint is removed.
+- **Codex + Anthropic-native providers keep reasoning across tool turns** — Responses
+  translation now emits a typed `reasoning` item for Anthropic thinking blocks instead of
+  folding them into assistant text. Codex echoes the item back on the next turn, and the proxy
+  re-attaches it as a `thinking` block before `tool_use`, so DeepSeek `/anthropic` no longer
+  returns `The content[].thinking in the thinking mode must be passed back to the API`.
+  Orphan reasoning is merged into the previous assistant message before the next user turn,
+  and thinking-only assistant messages are dropped on the OpenAI-compatible path so no empty
+  turns are sent upstream.
+- **Project scope explains the `allowed_roots` fence** — `GET /api/skills` now returns
+  `project.reason` (`outside_roots`, `no_roots`, `not_a_directory`, …) and
+  `project.allowed_roots`. The Skills panel states why project scope is disabled, lists the
+  configured roots, and points to **Agents → Bridge settings → Safety fence → Allowed roots**
+  with a shortcut button. Backend error messages include the allowed roots and the fix.
 
 ## [0.1.32] — 2026-11-02
 

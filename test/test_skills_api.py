@@ -83,6 +83,33 @@ def test_list_invalid_project_returns_reason(client, env):
     assert data["skills"]["claude"]["project"] == []
 
 
+def test_project_outside_roots_declares_fence(client, env):
+    outside = env["tmp_path"].parent / "outside-project"
+    resp = client.get("/api/skills", params={"project": str(outside)})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["project"]["valid"] is False
+    assert data["project"]["reason"] == "outside_roots"
+    assert data["project"]["allowed_roots"] == [str(env["tmp_path"].resolve())]
+    assert "outside allowed_roots" in data["project"]["error"]
+    assert "Bridge settings" in data["project"]["error"]
+
+
+def test_project_without_allowed_roots_declares_fence(client, env, monkeypatch):
+    agents = env["tmp_path"] / "empty-agents.json"
+    agents.write_text(json.dumps({"token": "t", "allowed_roots": []}), encoding="utf-8")
+    monkeypatch.setattr("bridge.config.AGENTS_PATH", agents)
+
+    resp = client.get("/api/skills", params={"project": str(env["project"])})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["project"]["valid"] is False
+    assert data["project"]["reason"] == "no_roots"
+    assert data["project"]["allowed_roots"] == []
+    assert "allowed_roots is empty" in data["project"]["error"]
+    assert "Bridge settings" in data["project"]["error"]
+
+
 # ------------------------------------------------------------- marketplace
 
 def test_marketplace_short_query_returns_suggestions(client):

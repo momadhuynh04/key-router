@@ -17,9 +17,64 @@ def _short_preview(text: str, n: int = 120) -> str:
     return (t[:n] + "…") if len(t) > n else t
 
 
+def _fold_system_messages(request: AnthropicRequest) -> None:
+    """Move `role: "system"` entries out of `messages` into the top-level system prompt.
+
+    Claude Code >= 2.1.3xx sends its Environment/context block as a second message
+    with `role: "system"`. Anthropic-native upstreams only accept `user`/`assistant`
+    and reject it with "Invalid discriminator value ... at messages.N.role"; the
+    OpenAI translation would silently drop the text. Folding it into `system` keeps
+    the context for every provider.
+    """
+    if not request.messages:
+        return
+    system_texts = []
+    kept = []
+    for message in request.messages:
+        if message.role != "system":
+            kept.append(message)
+            continue
+        content = message.content
+        if isinstance(content, str):
+            if content.strip():
+                system_texts.append(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text") or ""
+                    if text.strip():
+                        system_texts.append(text)
+    request.messages = kept
+    if not system_texts:
+        return
+    extra = "\n\n".join(system_texts)
+    if isinstance(request.system, list):
+        request.system.append({"type": "text", "text": extra})
+    else:
+        request.system = ((request.system or "") + "\n\n" + extra).strip()
+
+
+def _strip_thinking_display(request: AnthropicRequest) -> None:
+    """Drop the `thinking.display` beta hint before forwarding.
+
+    Claude Code >= 2.1.3xx sends `thinking: {"type": "adaptive", "display": "updates"}`.
+    Anthropic-compatible gateways that do not implement the thinking-display beta reject
+    the whole request with `Invalid input at thinking`. The value only controls how the
+    thinking summary is rendered, so dropping it lets the upstream use its default.
+    """
+    thinking = request.thinking
+    if thinking is None:
+        return
+    extra = getattr(thinking, "__pydantic_extra__", None)
+    if isinstance(extra, dict):
+        extra.pop("display", None)
+
+
 @router.post("/v1/messages")
 async def handle_messages(request: AnthropicRequest):
     logger.info(f"[🚀] Received request from Claude Code for model: {request.model} (tools={len(request.tools or [])} max_tokens={request.max_tokens} stream={request.stream})")
+    _fold_system_messages(request)
+    _strip_thinking_display(request)
     try:
         provider = provider_router.get_provider_for_anthropic(request.model)
         anthropic_req = request

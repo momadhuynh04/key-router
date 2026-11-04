@@ -27,6 +27,15 @@ export default function CustomProviderModal({ customProviders, onClose, onSaved 
   const canSubmit = idValid && !hasDuplicate && displayName.trim() && baseValid && apiKeyEnvValid && hasModel && !submitting
   const allReasoning = models.length > 0 && models.every(m => m.reasoning)
   const allImage = models.length > 0 && models.every(m => m.image)
+  const touched = Boolean(providerId || displayName || baseUrl || apiKey || hasModel || headers.length)
+  const blockers = [
+    !providerId.trim() ? 'Provider ID is required' : !idValid ? 'Provider ID: 2–32 lowercase letters, numbers, hyphens, or underscores (no spaces)' : '',
+    hasDuplicate ? 'That provider ID already exists' : '',
+    !displayName.trim() ? 'Display name is required' : '',
+    !baseValid ? 'Base URL must start with http:// or https://' : '',
+    !apiKeyEnvValid ? 'API key ENV name (or auth headers) is required' : '',
+    !hasModel ? 'Add at least one model ID' : '',
+  ].filter(Boolean)
 
   const submit = async () => {
     setError("")
@@ -71,7 +80,7 @@ export default function CustomProviderModal({ customProviders, onClose, onSaved 
           <div>
             <label className="block text-[11px] font-medium tracking-widest uppercase text-text-muted mb-1.5">Provider ID</label>
             <input value={providerId} onChange={e=>setProviderId(e.target.value.toLowerCase())} placeholder="myprovider" className="w-full h-9 rounded-lg bg-surface-850 border border-border px-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand" />
-            <p className="text-xs text-text-muted mt-1">{hasDuplicate ? 'ID already exists' : !providerId ? '' : !idValid ? 'Must be 2-32 chars: lowercase, numbers, hyphens, underscores' : 'Lowercase letters, numbers, hyphens, or underscores'}</p>
+            <p className="text-xs text-text-muted mt-1">{hasDuplicate ? 'ID already exists' : !providerId ? '' : !idValid ? 'Invalid: 2–32 lowercase letters, numbers, hyphens, or underscores (no spaces)' : 'Lowercase letters, numbers, hyphens, or underscores'}</p>
           </div>
           <div>
             <label className="block text-[11px] font-medium tracking-widest uppercase text-text-muted mb-1.5">Display name</label>
@@ -83,10 +92,20 @@ export default function CustomProviderModal({ customProviders, onClose, onSaved 
               <option value="openai_compatible">OpenAI Compatible</option>
               <option value="anthropic">Anthropic</option>
             </select>
+            <p className="text-xs text-text-muted mt-1">
+              {providerApi === 'anthropic'
+                ? 'Uses /v1/messages, so every model below must be supported by that endpoint. Use OpenAI Compatible for DeepSeek/OSS models.'
+                : 'Uses /chat/completions — the usual choice for OpenAI-style and OSS models.'}
+            </p>
           </div>
           <div>
             <label className="block text-[11px] font-medium tracking-widest uppercase text-text-muted mb-1.5">Base URL</label>
-            <input value={baseUrl} onChange={e=>setBaseUrl(e.target.value)} placeholder="https://api.myprovider.com/v1" className="w-full h-9 rounded-lg bg-surface-850 border border-border px-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand" />
+            <input value={baseUrl} onChange={e=>setBaseUrl(e.target.value)} placeholder={providerApi === 'anthropic' ? 'https://api.deepseek.com/anthropic' : 'https://api.myprovider.com/v1'} className="w-full h-9 rounded-lg bg-surface-850 border border-border px-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand" />
+            <p className="text-xs text-text-muted mt-1">
+              API root — key-router calls{' '}
+              <code className="font-mono">{providerApi === 'anthropic' ? '<base>/v1/messages' : '<base>/chat/completions'}</code>
+            </p>
+            {baseUrl.trim() && !baseValid && <p className="text-xs text-danger mt-1">Must start with http:// or https://</p>}
           </div>
           <div>
             <label className="block text-[11px] font-medium tracking-widest uppercase text-text-muted mb-1.5">API key <span className="normal-case tracking-normal text-text-muted font-normal">— ENV var name, not the raw key</span></label>
@@ -135,8 +154,16 @@ export default function CustomProviderModal({ customProviders, onClose, onSaved 
           </div>
 
           {error && <div className="text-sm text-danger rounded-lg bg-danger/10 border border-danger/20 p-3">{error}</div>}
+          {touched && blockers.length > 0 && (
+            <div className="rounded-lg border border-border bg-surface-850 p-3 text-xs text-text-muted">
+              <p className="font-medium text-text-secondary mb-1">Submit is disabled until:</p>
+              <ul className="list-disc pl-4 space-y-0.5">
+                {blockers.map(blocker => <li key={blocker}>{blocker}</li>)}
+              </ul>
+            </div>
+          )}
 
-          <button onClick={submit} disabled={!canSubmit} className="w-full h-10 rounded-full bg-brand text-white hover:bg-brand-muted disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium transition-colors">Submit</button>
+          <button onClick={submit} disabled={!canSubmit} title={blockers.join('\n')} className="w-full h-10 rounded-full bg-brand text-white hover:bg-brand-muted disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium transition-colors">Submit</button>
         </div>
       </div>
     </div>
