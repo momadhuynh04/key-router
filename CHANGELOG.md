@@ -7,6 +7,8 @@ matching section here. Releases before 0.1.32 are tracked in git history (`git l
 
 ## [Unreleased]
 
+## [0.1.33] — 2026-11-04
+
 ### Added
 
 - **Test lab (headless Claude Code / Codex)** — a new tab runs one agent turn in a chosen folder

@@ -4,11 +4,11 @@
   <h3><strong>Claude Code + Codex — 1 key, universal proxy</strong></h3>
 
   <p>
-    <img src="https://img.shields.io/badge/version-0.1.32-blueviolet.svg" alt="v0.1.32">
+    <img src="https://img.shields.io/badge/version-0.1.33-blueviolet.svg" alt="v0.1.33">
     <img src="https://img.shields.io/badge/Python-3.11+-blue.svg" alt="Python 3.11+">
     <img src="https://img.shields.io/badge/Framework-FastAPI-009688.svg" alt="FastAPI">
     <img src="https://img.shields.io/badge/Frontend-React%20%2B%20Tailwind-61DAFB.svg" alt="React">
-    <img src="https://img.shields.io/badge/Testing-PyTest%20298%20tests-brightgreen.svg" alt="298 tests">
+    <img src="https://img.shields.io/badge/Testing-PyTest%20352%20tests-brightgreen.svg" alt="352 tests">
     <img src="https://img.shields.io/badge/Streaming-SSE-orange.svg" alt="SSE">
     <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-0078D6.svg" alt="Platform">
     <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
@@ -48,13 +48,16 @@
 | ------- | ----------- |
 | **Claude Code + Codex** | `POST /v1/messages` (Claude), `POST /v1/chat/completions` + `POST /v1/responses` (Codex ≥0.149, `additional_tools` / `namespace` / `custom:exec`). |
 | **Multi-provider routing** | OpenRouter, DeepSeek (V3/V4 thinking), Google AI Studio, or any OpenAI/Anthropic endpoint. Ingress-aware: Claude → Anthropic, Codex → OpenAI passthrough. |
+| **Direct model addressing** | Any ingress accepts `<provider>/<model>` (built-in or custom provider ID) to call that provider directly, bypassing `config.json` routes. |
 | **Thinking mode fixes** | DeepSeek V4 `reasoning_content` echo ([litellm#26395](https://github.com/BerriAI/litellm/issues/26395), [api-docs.deepseek.com/guides/thinking_mode](https://api-docs.deepseek.com/guides/thinking_mode/)) + Gemini `thoughtSignature` ([opencode#347](https://github.com/Gitlawb/openclaude/issues/347)). Multi-turn tool calls no longer 400. |
 | **Full SSE streaming** | Token-by-token with Anthropic ↔ OpenAI translation and Responses typed events + agentic retry. |
 | **Vision passthrough** | Pasted images from Codex (`input_image` → `image_url` data URLs) and Claude Code (`image` blocks) survive translation: base64/URL blocks for OpenAI-compatible providers, `inlineData` for Gemini. |
 | **Skills manager** | Launcher → Skills: Installed/Browse, Claude Code/Codex split, global/project scope, real enable/disable, SKILL.md preview, install from skills.sh or a repo via `npx skills`. |
-| **Custom providers** | Any OpenAI/Anthropic API via WebUI or `python -m cli add-provider`. Keys by ENV name (`MY_API_KEY`), never raw. |
+| **Custom providers** | Any OpenAI/Anthropic API via the **Providers** tab or `python -m cli add-provider`. One raw key per provider in `secrets.json`; the dashboard only sees masked previews. |
+| **Settings & keys** | **Settings** tab: built-in/custom API keys and built-in base URLs stored in `secrets.json` (gitignored, `0600`), applied on the next request — no restart. |
+| **Test lab** | Headless **Claude Code / Codex** runs with optional image input and a `provider/model` override that bypasses routing; checks image understanding, HTML/Markdown artifacts, OS/languages and the ≤10 shell budget. |
 | **IDE auto-detect & launch** | VS Code, VSCodium, Cursor — sets `~/.claude/settings.json`, `~/.codex/config.toml`, `disableLoginPrompt`. |
-| **WebUI** | React + Tailwind dashboard for routing, provider CRUD, IDE detection and launch. |
+| **WebUI** | React + Tailwind dashboard: routing, providers, test lab, launcher, agents and settings. |
 | **Agent bridge** | Run Claude Code as a **real agent** (edits files, runs commands) from any chat UI. A separate `agent-bridge` service exposes one OpenAI-compatible model, `key-router-agents`; driven by `/start` `/stop` `/agents` `/call`. Pasted images are forwarded to the CLI, agents can ask you questions with `ask_user`, and `/call` runs one-off sub-agents whose steps + result are handed to the main agent. Managed from the WebUI **Agents** tab. |
 | **Cross-platform** | Windows / Linux / macOS. `start.sh` / `start.bat`, `dev.sh` / `dev.bat`. |
 
@@ -62,7 +65,7 @@
 
 ## Tested with
 
-Last verified on **Arch Linux** (2026-11-02):
+Last verified on **Arch Linux** (2026-11-04):
 
 | Component | Version | Notes |
 | --------- | ------- | ----- |
@@ -73,7 +76,7 @@ Last verified on **Arch Linux** (2026-11-02):
 | Node.js | 18+ · 22.20+ for Skills | |
 
 Other versions may work. The Agent bridge depends on the CLI flags above; if a CLI renames them, update
-`bridge/registry.py`. See [CHANGELOG.md](CHANGELOG.md) for what changed in 0.1.32.
+`bridge/registry.py`. See [CHANGELOG.md](CHANGELOG.md) for what changed in 0.1.33.
 
 ---
 
@@ -336,14 +339,26 @@ API: `GET /api/skills`, `GET /api/skills/marketplace`, `POST /api/skills/install
 
 ## Configuration
 
+**`.env`** (process settings only):
+
 | Variable | Required | Default |
 | -------- | -------- | ------- |
-| `OPENROUTER_API_KEY` | if using OpenRouter | — |
-| `DEEPSEEK_API_KEY` | if using DeepSeek | — |
-| `GOOGLE_API_KEY` | if using Google | — |
-| `DEEPSEEK_BASE_URL_ANTHROPIC` | No | `https://api.deepseek.com/anthropic` |
-| `DEEPSEEK_BASE_URL_OPENAI` | No | `https://api.deepseek.com` |
 | `HOST` / `PORT` | No | `127.0.0.1` / `8082` |
+
+**secrets.json** (managed from **Settings**; gitignored, written with `0600`):
+
+```json
+{
+  "keys": {"openrouter": "...", "deepseek": "...", "google": "..."},
+  "custom_keys": {"<provider-id>": "..."},
+  "base_urls": {"openrouter": "...", "deepseek_anthropic": "...", "deepseek_openai": "...", "google": "..."}
+}
+```
+
+`secrets.json` is the **only** key source — there is no environment/`.env` fallback. Built-in base URLs
+use hardcoded defaults unless overridden here. Keys and base URLs are read on every provider
+instantiation, so Settings changes apply on the next request without restarting the proxy. The
+dashboard only ever receives masked previews.
 
 **config.json** (via WebUI):
 
@@ -362,6 +377,10 @@ family, so upstream renames (`opus`/`sonnet`/`haiku`/`fable`, `gpt-5.x`/`codex`/
 `sonnet`, `haiku`) still work as overrides and are merged into `claude`
 automatically when the proxy starts (Sonnet's route is kept). An exact model key
 (e.g. `claude-opus-4-1-20250805`) overrides the family route for that model only.
+
+A requested model written as `<provider>/<model>` (built-in or custom provider ID, e.g.
+`deepseekplatform/deepseek-flash`) bypasses these routes and calls that provider directly. The **Test
+lab** uses this for its model override.
 
 **agents.json** (via WebUI → Agents tab; `cp agents.example.json agents.json` to start from a template):
 
@@ -449,10 +468,12 @@ python -m pytest test/ -v
 | `test_openai_base.py` · `test_openai_stream.py` · `test_events.py` | Translation & SSE |
 | `test_codex_ingress.py` · `test_codex_responses.py` | Chat + Responses ingress |
 | `test_config.py` · `test_codex_config.py` | Mapper, codex config |
+| `test_secrets.py` · `test_settings_api.py` | `secrets.json` store, Settings API |
+| `test_custom_providers.py` · `test_testlab.py` | Provider CRUD, headless Test lab |
 | `test_openrouter.py` · `test_deepseek.py` | Adapters |
 | `test_bridge_*.py` · `test_agents_api.py` | Agent bridge: directives, argv, SSE, API, dashboard CRUD |
 
-298 tests.
+352 tests.
 
 **Add a provider (code):** see [provider/CUSTOM_PROVIDER_GUIDE.md](provider/CUSTOM_PROVIDER_GUIDE.md) — inherit `OpenAIBaseProvider` or `BaseProvider`, register in `proxy/router.py`.
 
@@ -473,14 +494,14 @@ Codex Chat   POST /v1/chat/completions ─┤→ proxy/app.py → routers/* → 
 
 ```
 key-router/
-├── proxy/            app, server, routers, ingress, errors, retry
+├── proxy/            app, server, routers, ingress, errors, retry, testlab
 ├── provider/         base, openai_base, openrouter, deepseekplatform, googleaistudio, custom
 ├── models/           anthropic, openai_compat, events
-├── config/           settings, model_map, codex_config, custom_providers, skills
+├── config/           settings (host/port), secrets, model_map, codex_config, custom_providers, skills
 ├── bridge/           agent-bridge: OpenAI-compatible front for Claude Code / Codex
-├── webui/            React + Tailwind (App.tsx, AgentModal.tsx, BridgePanel.tsx, SkillsPanel.tsx)
+├── webui/            React + Tailwind (App.tsx, SettingsPanel.tsx, TestLabPanel.tsx, …)
 ├── cli/              typer CLI (serve, add/list/remove provider)
-├── test/             298 tests
+├── test/             352 tests
 └── start.sh / dev.sh
 ```
 
@@ -491,7 +512,7 @@ key-router/
 ### Đã test với
 
 Arch Linux · Claude Code **2.1.304** · Codex **0.149.0** · Open WebUI **0.10.2** · Python 3.11+ ·
-Node 18+ (22.20+ cho Skills). Xem [CHANGELOG.md](CHANGELOG.md) để biết thay đổi của bản 0.1.32.
+Node 18+ (22.20+ cho Skills). Xem [CHANGELOG.md](CHANGELOG.md) để biết thay đổi của bản 0.1.33.
 
 ### Cài đặt
 

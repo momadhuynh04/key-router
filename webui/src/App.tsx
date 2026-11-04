@@ -9,7 +9,7 @@ import TestLabPanel from './TestLabPanel'
 import type { Agent } from './AgentModal'
 
 const FAMILY_KEYS = ['claude', 'codex']
-const APP_VERSION = '0.1.32'
+const APP_VERSION = '0.1.33'
 
 function GitHubIcon({ className = 'h-3.5 w-3.5' }: { className?: string }) {
   return (
