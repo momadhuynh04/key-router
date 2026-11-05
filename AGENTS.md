@@ -143,6 +143,9 @@ its own repo later). `runner.proxy_env()` sets `ANTHROPIC_BASE_URL` etc. locally
 | `routers/settings.py` | `/api/settings*` — key list/save/delete (built-in + custom), built-in base URLs. Responses only carry masked previews. |
 | `routers/testlab.py` | `/api/testlab*` — headless Claude Code/Codex runs: start, poll, stop, meta. |
 | `testlab.py` | Test-run domain: scenario prompt, run registry, Claude/Codex JSONL parsing, artifact + check building. Reuses `bridge.runner`/`registry`/`sse`; needs no bridge process. |
+| `routers/tools.py` | `/api/tools*` — personal tools: list, install/reinstall, setup, start/stop/restart, logs, uninstall, tool credentials (masked). |
+| `tools_hub.py` | Tool domain: GitHub tarball install (safe extract), loopback port allocation, process spawn/stop with session token, `tool.json` env mapping. |
+| `process_utils.py` | Shared `kill_tree`, zombie-aware `pid_alive`, `reap`, detached `spawn_kwargs`, `tail_file`. |
 | `openai_ingress.py` | OpenAI Chat ↔ Anthropic translation, including image parts and OpenAI SSE chunks. |
 | `responses_ingress.py` | Responses ↔ Anthropic translation, typed Responses SSE, thinking ↔ `reasoning` items, tool unwrapping, text-imitating-tool-call rescue, narration/garbled detection. **Large, central file — touch carefully.** |
 | `server_helpers.py` | IDE definitions/detection, safe JSON merge of `~/.claude/settings.json` and IDE settings, terminal/IDE launching. |
@@ -167,7 +170,8 @@ its own repo later). `runner.proxy_env()` sets `ANTHROPIC_BASE_URL` etc. locally
 | File | Responsibility |
 | ---- | -------------- |
 | `settings.py` | Pydantic settings from `.env` (`host`, `port` only). |
-| `secrets.py` | `secrets.json` store: built-in/custom API keys and built-in base URL overrides (defaults hardcoded), masked previews, atomic `0600` writes. Sole key source; read per provider instantiation for hot reload. |
+| `secrets.py` | `secrets.json` store: built-in/custom API keys, built-in base URL overrides (defaults hardcoded) and `tool_keys` for personal tools; masked previews, atomic `0600` writes. Sole key source; read per provider instantiation for hot reload. |
+| `tools.py` | Personal-tool registry: `.key-router/tools.json` (tracked catalog/source) + `.key-router/runtime.json` (gitignored pid/token/port), install/manifest validation (`tool.json`), tool/log paths. Installed code lives in the repo's `tools/<id>/` root (gitignored). |
 | `model_map.py` | `ModelMapper` singleton. Exact match → tier keyword → family fallback (`claude`, `codex`) → error. Consolidates legacy `opus`/`sonnet`/`haiku` into `claude` and rewrites `config.json` on load. |
 | `custom_providers.py` | Custom provider CRUD in `config.json`, one key per provider ID via `secrets.py`, key masking, `lru_cache` (invalidate after writes). |
 | `codex_config.py` | Merges `~/.codex/config.toml` (`wire_api = "responses"`, dummy `env_key`) and persists the env var per OS. |
@@ -199,10 +203,36 @@ its own repo later). `runner.proxy_env()` sets `ANTHROPIC_BASE_URL` etc. locally
 ### `webui/src/`
 
 No router/libraries beyond React. Tabs live in `App.tsx` (`routing`, `providers`, `testlab`,
-`launcher`, `agents`, `settings`); panel components are `AgentModal.tsx`, `BridgePanel.tsx`,
+`tools`, `launcher`, `agents`, `settings`); panel components are `AgentModal.tsx`, `BridgePanel.tsx`,
 `SkillsPanel.tsx`, `CustomProvidersPanel.tsx`, `CustomProviderModal.tsx`, `SettingsPanel.tsx`,
-`TestLabPanel.tsx`. Data comes from `fetch('/api/...')`; Vite proxies `/api` and `/v1`
+`TestLabPanel.tsx`, `ToolsPanel.tsx`. Data comes from `fetch('/api/...')`; Vite proxies `/api` and `/v1`
 to `:8082` in dev. Styling is Tailwind utility classes with custom tokens in `index.css`.
+
+### `tools/` — personal tool sub-apps
+
+`tools/git-tool/` is a standalone FastAPI + Vite app (own `requirements.txt`, own `webui/`) published
+from its own GitHub repo. It reads `tool.json` from its root, gets `GITHUB_TOKEN` /
+`KEY_ROUTER_URL` / `KEY_ROUTER_TOOL_TOKEN` / `KEY_ROUTER_TOOL_DATA` from the environment, and
+validates the session token on `/api/*`. It must not import anything from `proxy/` or `config/`.
+
+Its repo discovery (`git_tool/discovery.py`) treats the token as the source of truth: it lists
+GitHub repos by affiliation (`owner` / `collaborator` / `organization_member`, 100/page, 5-page cap)
+and only then scans the `allowed_roots` from `GET /api/agents` (depth 3, prunes
+`node_modules`/venv/dist, 20k dirs / 20s) to mark which of those have a local clone. Clones the token
+cannot reach stay hidden; with no token (or an empty result) the list falls back to the local scan.
+`meta.source` says which mode produced the list. Results, pins and recent repos are cached in
+`KEY_ROUTER_TOOL_DATA/state.json`.
+
+Write operations run the user's collaborator loop through `/api/workflow/start`, `/api/workflow/sync`,
+`/api/commit` and `/api/push`. Both step endpoints return `{ok, steps[]}` with one entry per git
+command so the UI can show where a run stopped. Network commands (`pull`, `push`) authenticate with
+the tool's GitHub token via `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0` env vars plus
+`GIT_TERMINAL_PROMPT=0` — never on the command line and never written to config.
+
+Discussions use the GitHub GraphQL endpoint (`POST /graphql`), exposed as `/api/discussions`;
+GraphQL errors are surfaced as `GitHubError` text so the UI can show "discussions unavailable"
+instead of an empty list. Panel data is keyed by a `dataVersion` counter in the app: the header
+**Sync** button runs `git fetch` and bumps it, and every panel includes it in its load effect.
 
 ### `cli/` and scripts
 
@@ -212,9 +242,11 @@ thin platform wrappers.
 
 ### `test/`
 
-Flat pytest suite (~298 tests), no conftest. Typical pattern: `TestClient(proxy.server.app)`
+Flat pytest suite (~383 tests), no conftest. Typical pattern: `TestClient(proxy.server.app)`
 plus `patch('proxy.server.provider_router.get_provider')` / `AsyncMock` providers.
-Bridge tests use `pytest-asyncio`, `tmp_path`, and `monkeypatch`.
+Bridge tests use `pytest-asyncio`, `tmp_path`, and `monkeypatch`. The git tool keeps its own
+suite in `tools/git-tool/tests/`; its `conftest.py` puts the package on `sys.path`, so the root
+`python -m pytest` collects it too and `cd tools/git-tool && python -m pytest` still works.
 
 ---
 
@@ -266,6 +298,18 @@ Bridge tests use `pytest-asyncio`, `tmp_path`, and `monkeypatch`.
     Responses `reasoning` items (never assistant text); Codex echoes them back and
     `responses_to_anthropic` re-attaches them to the `tool_use` message. DeepSeek `/anthropic`
     rejects tool turns whose thinking was dropped (`content[].thinking ... must be passed back`).
+19. **Personal tools run as separate loopback processes.** Install goes to the repo's `tools/<id>/`
+    root (gitignored). `.key-router/tools.json` is **tracked** (catalog + source repo); runtime
+    (`runtime.json`), logs and data are gitignored. A tool's
+    credentials live in `secrets.json::tool_keys`, declared by `tool.json` (`"ENV": "tool:<name>"`).
+    They are configured **in the tool's own UI** and read/written through
+    `/api/tools/<id>/credentials/<name>`, which only accepts that tool's per-start `X-Tool-Token`.
+    The registry records the source repo (local installs infer it from the git remote), so a deleted
+    install folder can be restored through `POST /api/tools/<id>/reinstall`.
+    Tools bind `127.0.0.1` and validate the same token on `/api/*`. `"ENV": "tool:data"` resolves to
+    `.key-router/data/<id>/` (created on start) for persistent tool state. Stop must kill the process
+    group **and** reap it — a stopped child is a zombie, and `kill(pid, 0)` still succeeds for zombies
+    (handled in `proxy/process_utils.py`).
 
 ---
 
@@ -285,7 +329,8 @@ No keys or base URLs live here. Manage them in the dashboard **Settings** tab (s
 {
   "keys": {"openrouter": "...", "deepseek": "...", "google": "..."},
   "custom_keys": {"<provider-id>": "..."},
-  "base_urls": {"openrouter": "...", "deepseek_anthropic": "...", "deepseek_openai": "...", "google": "..."}
+  "base_urls": {"openrouter": "...", "deepseek_anthropic": "...", "deepseek_openai": "...", "google": "..."},
+  "tool_keys": {"github": "..."}
 }
 ```
 
@@ -321,7 +366,11 @@ Per agent: `id`, `name`, `cli`, `model`, `workdir`, `permission`, `effort`, `too
 `~/.claude/settings.json` (`ANTHROPIC_BASE_URL` + `ANTHROPIC_API_KEY`),
 `~/.codex/config.toml` (`model_provider = "key-router"`),
 IDE `User/settings.json` (`claudeCode.disableLoginPrompt`),
-`~/.config/environment.d/key-router.conf` / `setx` / `launchctl` for `KEY_ROUTER_API_KEY`.
+`~/.config/environment.d/key-router.conf` / `setx` / `launchctl` for `KEY_ROUTER_API_KEY`,
+and for personal tools: `.key-router/tools.json` (tracked registry, `0600`),
+`.key-router/runtime.json` (gitignored pid/token/port), `.key-router/logs/<id>.log` (start/setup
+output), `.key-router/data/<id>/` (per-tool state, e.g. the Git tool's `state.json`). Installed
+tool code lives in the repo's `tools/<id>/`.
 
 ---
 
@@ -379,6 +428,16 @@ register the router in `proxy/app.py`, and expose it from `webui/src/App.tsx`.
 **Change CLI flag handling:** only in `bridge/registry.py`; then update
 `test/test_bridge_registry.py` and `README.md`.
 
+**Add a personal tool:** create a repo with `tool.json` (`id`, `name`, `start`, optional `setup`,
+`health`, `default_port`, `env`), a `/health` endpoint, and bind `127.0.0.1`. Publish it and install
+by `owner/repo` (or register a local folder). If the tool needs a credential, declare
+`"ENV_VAR": "tool:<name>"` and add the name/label in `proxy/tools_hub.py::TOOL_KEY_LABELS`. The
+tool's own Settings UI saves it via `PUT /api/tools/<id>/credentials/<name>` with its `X-Tool-Token`
+(see `tools/git-tool/git_tool/keyrouter.py`); key-router keeps it in `secrets.json::tool_keys` and
+returns only masked previews to the dashboard. For persistent state, declare
+`"TOOL_DATA": "tool:data"`; the hub creates `.key-router/data/<id>/` and passes it.
+Do not import `proxy/` or `config/` from a tool.
+
 **Bump the version (single source of truth is `APP_VERSION`):**
 `webui/src/App.tsx` → `webui/package.json` + `webui/package-lock.json` (both top-level
 `version` fields) → `README.md` badge and any `v0.1.x` references → new section in
@@ -394,6 +453,8 @@ register the router in `proxy/app.py`, and expose it from `webui/src/App.tsx`.
 | 400 on multi-turn tool calls / thinking | `provider/openai_base.py`, `provider/deepseekplatform/adapter.py` |
 | Gemini empty response / 400 on tools | `provider/googleaistudio/adapter.py` (schema sanitizing, `thoughtSignature`) |
 | Test lab run fails immediately | `proxy/testlab.py` (CLI in `PATH`, `allowed_roots` fence, image base64/size), `bridge/registry.py` flags |
+| Tool will not start / stays "starting" | `proxy/tools_hub.py` (manifest `start`/`health`, port, env), `.key-router/logs/<id>.log` |
+| Tool iframe shows 401 | session token mismatch — restart the tool; check `KEY_ROUTER_TOOL_TOKEN` handling in the tool |
 | Codex "narrates" instead of running tools | `proxy/responses_ingress.py` (`looks_like_action_narration`, `_extract_text_tool_calls`), `proxy/routers/responses.py` |
 | `Invalid discriminator value ... at messages.N.role` | `proxy/routers/anthropic.py::_fold_system_messages` (Claude Code sends `role: "system"` messages) |
 | `Invalid input at thinking` | `proxy/routers/anthropic.py::_strip_thinking_display` (Claude Code sends `thinking.display`) |

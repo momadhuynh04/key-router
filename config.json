@@ -10,7 +10,7 @@
       "name": "VS Code",
       "config_dir": "Code",
       "supports_claude_extension": true,
-      "last_detected": "2026-11-02T16:54:28.295281"
+      "last_detected": "2026-11-05T19:03:46.868801"
     },
     "vscodium": {
       "binary": "/usr/bin/codium",
@@ -18,7 +18,7 @@
       "name": "VSCodium",
       "config_dir": "VSCodium",
       "supports_claude_extension": true,
-      "last_detected": "2026-11-02T16:54:28.467411"
+      "last_detected": "2026-11-05T19:03:47.025398"
     },
     "cursor": {
       "binary": "/usr/bin/cursor",
@@ -26,14 +26,59 @@
       "name": "Cursor",
       "config_dir": "Cursor",
       "supports_claude_extension": true,
-      "last_detected": "2026-11-02T16:54:28.711522"
+      "last_detected": "2026-11-05T19:03:47.246901"
     }
   },
   "codex_cli_detected": {
     "binary": "/usr/bin/codex",
     "version": "codex-cli 0.149.0",
     "name": "Codex CLI",
-    "last_detected": "2026-11-02T16:54:28.074379"
+    "last_detected": "2026-11-05T18:56:37.171725"
   },
-  "custom_providers": {}
+  "custom_providers": {
+    "command-code-openai": {
+      "id": "command-code-openai",
+      "display_name": "command-code-openai",
+      "provider_api": "openai_compatible",
+      "base_url": "https://api.commandcode.ai/provider/v1",
+      "api_key_env": "COMMAND_CODE_USER_API",
+      "headers": {},
+      "models": [
+        {
+          "id": "z-ai/glm-5.3-flash",
+          "name": "glm-5.3-flash",
+          "reasoning": true,
+          "image": true
+        },
+        {
+          "id": "deepseek/deepseek-v4.1-flash",
+          "name": "deepseek-v4.1-flash",
+          "reasoning": true,
+          "image": true
+        }
+      ]
+    },
+    "deepseek-anthropic-route": {
+      "id": "deepseek-anthropic-route",
+      "display_name": "Deepseek Anthropic Route",
+      "provider_api": "anthropic",
+      "base_url": "https://api.deepseek.com/anthropic",
+      "headers": {},
+      "models": [
+        {
+          "id": "deepseek-flash",
+          "name": "Deepseek Flash",
+          "reasoning": true,
+          "image": true
+        }
+      ]
+    }
+  },
+  "recent_dirs": [
+    "/tmp/test_project",
+    "/mnt/Data/ProjectStorage/ttuploader",
+    "/mnt/Data/ProjectStorage/probrowser",
+    "/mnt/Data/ProjectStorage/simplevg-studio",
+    "/mnt/Data/rikkei/MiniAPI"
+  ]
 }

@@ -56,6 +56,7 @@
 | **Custom providers** | Any OpenAI/Anthropic API via the **Providers** tab or `python -m cli add-provider`. One raw key per provider in `secrets.json`; the dashboard only sees masked previews. |
 | **Settings & keys** | **Settings** tab: built-in/custom API keys and built-in base URLs stored in `secrets.json` (gitignored, `0600`), applied on the next request — no restart. |
 | **Test lab** | Headless **Claude Code / Codex** runs with optional image input and a `provider/model` override that bypasses routing; checks image understanding, HTML/Markdown artifacts, OS/languages and the ≤10 shell budget. |
+| **Personal tools** | **Tools** tab: install small tools from your own GitHub repos (or a local folder), start/stop each on a loopback port, and open its UI inside the dashboard. Tool credentials are configured in each tool's own Settings and stored in `secrets.json`; a Git workspace tool ships in `tools/git-tool`. |
 | **IDE auto-detect & launch** | VS Code, VSCodium, Cursor — sets `~/.claude/settings.json`, `~/.codex/config.toml`, `disableLoginPrompt`. |
 | **WebUI** | React + Tailwind dashboard: routing, providers, test lab, launcher, agents and settings. |
 | **Agent bridge** | Run Claude Code as a **real agent** (edits files, runs commands) from any chat UI. A separate `agent-bridge` service exposes one OpenAI-compatible model, `key-router-agents`; driven by `/start` `/stop` `/agents` `/call`. Pasted images are forwarded to the CLI, agents can ask you questions with `ask_user`, and `/call` runs one-off sub-agents whose steps + result are handed to the main agent. Managed from the WebUI **Agents** tab. |
@@ -239,7 +240,54 @@ The model field accepts `provider/model` (e.g. `openrouter/anthropic/claude-sonn
 plain names use the current route. Artifacts go to `<workdir>/.key-router-testlab/<run-id>/`, steps
 stream into the dashboard, and the last 20 runs are kept for comparison.
 
-### 5. Launch
+### 5. Personal tools
+
+The **Tools** tab is an optional hub for your own small apps. Each tool is a separate GitHub repo
+with a `tool.json` manifest (`id`, `name`, `start`, optional `setup`, `health`, `default_port`,
+`env`). Register it with `POST /api/tools/install` (`owner/repo` or a local folder), then press **Start**:
+
+- the package is downloaded from GitHub into `tools/<id>/` inside the key-router repo (100 MB cap, safe extract);
+- starting it runs the manifest command on a free loopback port, with logs under `.key-router/logs/`;
+- the tool UI opens in an iframe inside the dashboard; **Back** returns to the gallery;
+- tools run until you stop them (SIGTERM → SIGKILL on the whole process group), and **Uninstall**
+  removes the folder and registry entry;
+- if a tool's folder disappears, its card shows **Reinstall** and downloads it again from the GitHub
+  repo recorded in the registry (local installs read it from the git remote). Without a recorded
+  repo, Reinstall asks for `owner/repo` once;
+- `.key-router/tools.json` is **tracked** — it records each tool's source repo, so a fresh clone can
+  list the tool and **Install** it. `runtime.json` (pid/session/port), logs and data stay gitignored.
+
+**Credentials live in each tool's own Settings**, not on the Tools page. A manifest declares them
+(`"GITHUB_TOKEN": "tool:github"`); key-router stores the value in `secrets.json` → `tool_keys` and
+exposes it only to that tool, through a `X-Tool-Token`-protected endpoint scoped to the tool and its
+current session. The tool UI reads back a masked preview, never the raw value. Each start also gets a
+random session token (`?token=…`) that the tool's API middleware validates.
+
+`tools/git-tool/` is the first tool: token status, a branch page (local branches above remote ones;
+every remote branch compared against either the selected local branch or the repo's default branch —
+ahead/behind, commits and changed files both ways — plus a lane-drawn commit/merge graph and
+switching local branches), and GitHub pull requests and issues (list, detail, create, comment,
+open/close). A **Workflow** tab runs the collaborator loop — checkout base → pull → new branch,
+merge the base into a task branch, stage-all + commit, push — and ends by opening the pull request
+for the branch it just pushed (there is no generic "create PR" form). **My pull requests** tracks
+the PRs you opened (state, merged or not, link to GitHub) for everyone; owners additionally get a
+**Pull requests** tab listing the whole repo, where each open PR can be merged
+(merge commit / squash / rebase). **Issues & discussions** combines GitHub issues (state filters,
+detail, comments, create, open/close) with repository discussions (read-only, linked to GitHub).
+A single **Sync** button in the repo header runs `git fetch` and reloads every panel, so counts and
+lists stop going stale between tabs. It can be registered from a local
+folder while developing, and lives in its own repo when published.
+
+**Repo discovery** in the Git tool is token-first: it lists every repo the token can see
+(`owner`, `collaborator`, `organization_member`) and only then scans `allowed_roots` (depth 3) to
+mark which of them have a local clone. Clones the token cannot reach are hidden; with no token (or an
+empty result) the list falls back to the local scan. A GitHub repo is marked local when a matching
+remote exists on this machine; otherwise it shows **“not found on this machine (or outside allowed
+roots)”**. The sidebar has search,
+All/Local/Remote/Pinned filters and pinning; scan roots, depth and refresh live in the tool's
+Settings tab. Tool state (cache, pins, recent) is stored in `.key-router/data/<tool-id>/` (gitignored, inside the repo).
+
+### 6. Launch
 
 | Target | What it does |
 | ------ | ------------ |
@@ -251,7 +299,7 @@ Then: `claude` · `codex` · or Spark icon in IDE.
 
 > IDE not showing? Check `which code` / `where code` is in `PATH`, then run `detect-ide.sh` / `detect-ide.bat`.
 
-### 6. Run agents from Open WebUI
+### 7. Run agents from Open WebUI
 
 `agent-bridge` lets a chat UI drive Claude Code as a real agent — it edits files and runs commands in a
 chosen project folder. It is a **separate service** (default `:8083`) that you start from the WebUI
@@ -307,7 +355,7 @@ Tool calls, permission denials, cost and duration are rendered inline in the rep
 `auto`, `ci` (`dontAsk`), `bypass` (only when `allow_bypass` is on; containers/VMs only). Headless runs
 have no interactive prompt: anything that would ask is **denied instead**, and the denial is shown in the chat.
 
-### 7. Manage skills
+### 8. Manage skills
 
 **Launcher → Skills** (no separate tab): choose **Claude Code** or **Codex**, then **Global** or
 **Project**, and use **Installed** / **Browse**.
@@ -470,10 +518,11 @@ python -m pytest test/ -v
 | `test_config.py` · `test_codex_config.py` | Mapper, codex config |
 | `test_secrets.py` · `test_settings_api.py` | `secrets.json` store, Settings API |
 | `test_custom_providers.py` · `test_testlab.py` | Provider CRUD, headless Test lab |
+| `test_tools_*.py` | Personal tools: registry/manifest, install & safe extract, dashboard API |
 | `test_openrouter.py` · `test_deepseek.py` | Adapters |
 | `test_bridge_*.py` · `test_agents_api.py` | Agent bridge: directives, argv, SSE, API, dashboard CRUD |
 
-352 tests.
+393 tests, plus 72 for the git tool (`cd tools/git-tool && python -m pytest tests/`).
 
 **Add a provider (code):** see [provider/CUSTOM_PROVIDER_GUIDE.md](provider/CUSTOM_PROVIDER_GUIDE.md) — inherit `OpenAIBaseProvider` or `BaseProvider`, register in `proxy/router.py`.
 
@@ -494,14 +543,15 @@ Codex Chat   POST /v1/chat/completions ─┤→ proxy/app.py → routers/* → 
 
 ```
 key-router/
-├── proxy/            app, server, routers, ingress, errors, retry, testlab
+├── proxy/            app, server, routers, ingress, errors, retry, testlab, tools_hub
 ├── provider/         base, openai_base, openrouter, deepseekplatform, googleaistudio, custom
 ├── models/           anthropic, openai_compat, events
-├── config/           settings (host/port), secrets, model_map, codex_config, custom_providers, skills
+├── config/           host/port, secrets, model_map, codex_config, custom_providers, skills, tools
 ├── bridge/           agent-bridge: OpenAI-compatible front for Claude Code / Codex
-├── webui/            React + Tailwind (App.tsx, SettingsPanel.tsx, TestLabPanel.tsx, …)
+├── tools/git-tool/   personal tool sub-app (FastAPI + Vite UI)
+├── webui/            React + Tailwind (App.tsx, SettingsPanel.tsx, TestLabPanel.tsx, ToolsPanel.tsx, …)
 ├── cli/              typer CLI (serve, add/list/remove provider)
-├── test/             352 tests
+├── test/             393 tests (+ tools/git-tool/tests)
 └── start.sh / dev.sh
 ```
 
@@ -570,6 +620,10 @@ Vào tab **Model routing**: `Opus / Sonnet / Haiku / Codex` → chọn **Target 
 Tab **Agent launcher**: **Claude Code** mở terminal đã set `ANTHROPIC_BASE_URL`, **Codex** tự ghi `~/.codex/config.toml`, **VS Code / Cursor / VSCodium** tự detect qua `PATH` — bấm là chạy.
 
 **Test lab:** tab **Test lab** chạy 1 lượt agent headless trên **Claude Code** hoặc **Codex** trong thư mục thuộc `allowed_roots`, kèm ảnh nếu muốn. Nó tự kiểm tra: hiểu ảnh, tạo `key-router-test.html`, đọc OS/cấu hình máy, liệt kê ngôn ngữ đã cài, viết `key-router-review.md`, và giới hạn ≤10 lệnh shell. Ô model nhận `provider/model` (vd `deepseekplatform/deepseek-flash`) để **bỏ qua Model routing**; artifact nằm ở `<workdir>/.key-router-testlab/<run-id>/`.
+
+**Tools (personal):** tab **Tools** để cài tool cá nhân từ GitHub của bạn. Mỗi tool là một repo riêng có `tool.json` (`start`, `setup`, `health`, `env`…). Tool đã đăng ký hiện trong tab; bấm **Install** (nếu chưa có folder) hoặc **Start**: key-router tải package vào `tools/<id>/` trong repo key-router, chạy command trên một port loopback, rồi nhúng UI của tool vào dashboard bằng iframe. Token (vd GitHub PAT) được nhập trong **Settings của chính tool** (không phải trang Tools), lưu ở `secrets.json` → `tool_keys`, và chỉ tool đang chạy đọc được qua endpoint có session token; mỗi lần start có session token riêng. Tool đầu tiên là **Git workspace** (`tools/git-tool/`): xem branch kèm ahead/behind và commit cuối, tạo/switch branch, xem/tạo/comment PR và issue. Dev có thể đăng ký thẳng thư mục local, không cần publish lên GitHub. Nếu xoá thư mục của tool, card hiện **Reinstall** và tải lại từ repo GitHub đã lưu trong registry (tool local tự đọc remote git); nếu chưa lưu repo thì Reinstall hỏi `owner/repo` một lần. `.key-router/tools.json` được **track trong git** (ghi repo nguồn để clone mới vẫn Install được); `runtime.json`, logs và data thì gitignored.
+
+**Phát hiện repo** trong Git tool chạy 2 nguồn: liệt kê mọi repo mà token thấy (`owner` / `collaborator` / `organization_member`) và quét `allowed_roots` (depth 3) để tìm bản clone. Repo GitHub có clone trên máy được đánh dấu local; nếu không sẽ hiện **“not found on this machine (or outside allowed roots)”**. Sidebar có search, filter All/Local/Remote/Pinned và ghim repo; roots/depth và refresh nằm trong tab **Settings** của tool. State (cache/pin/recent) lưu ở `.key-router/data/<tool-id>/` (gitignored, ngay trong repo).
 
 **Settings:** tab **Settings** quản lý API key cho OpenRouter / DeepSeek / Google và từng custom provider (lưu `secrets.json`, áp dụng ngay không cần restart; dashboard chỉ thấy preview) cùng Base URL của 3 provider builtin. `secrets.json` là nguồn key duy nhất.
 

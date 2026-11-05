@@ -63,4 +63,17 @@ def test_base_url_defaults_and_override(secrets_path):
 
 
 def test_missing_secrets_file_is_empty(secrets_path):
-    assert store.load_secrets() == {"keys": {}, "custom_keys": {}, "base_urls": {}}
+    assert store.load_secrets() == {"keys": {}, "custom_keys": {}, "base_urls": {}, "tool_keys": {}}
+
+
+def test_tool_key_roundtrip(secrets_path):
+    assert store.get_tool_key("github") == ""
+    store.set_tool_key("github", "ghp_tool_secret")
+
+    assert store.get_tool_key("github") == "ghp_tool_secret"
+    masked = store.list_tool_keys()["github"]
+    assert masked["has_key"] is True
+    assert "ghp_tool_secret" not in masked["preview"]
+
+    assert store.delete_tool_key("github") is True
+    assert store.get_tool_key("github") == ""

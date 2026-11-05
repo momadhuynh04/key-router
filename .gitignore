@@ -33,9 +33,11 @@ secrets.json
 # ========================
 # Agent / Internal
 # ========================
-.agent/PLAN.MD
+.agent/
 .commandcode/
 projects/
+.key-router/*
+!.key-router/tools.json
 .key-router-testlab/
 
 # ========================
@@ -61,6 +63,11 @@ bridge.log
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ========================
+# Personal tools (sub-apps)
+# ========================
+tools/*/
 
 # ========================
 # Testing & Cache

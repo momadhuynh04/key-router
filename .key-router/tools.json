@@ -1,0 +1,18 @@
+{
+  "tools": {
+    "git-tool": {
+      "id": "git-tool",
+      "name": "Git workspace",
+      "version": "0.1.0",
+      "description": "Branches, pull requests and issues for the repositories on this machine.",
+      "install_dir": "/mnt/Data/ProjectStorage/key-router/tools/git-tool",
+      "source": {
+        "type": "github",
+        "repo": "huynhhoang04/git-tool",
+        "branch": "main"
+      },
+      "health": "/health",
+      "installed_at": "2026-11-05T18:56:02"
+    }
+  }
+}

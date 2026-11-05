@@ -7,6 +7,74 @@ matching section here. Releases before 0.1.32 are tracked in git history (`git l
 
 ## [Unreleased]
 
+### Added
+
+- **Personal tools (Tools tab)** — an optional hub for your own small apps. Tools are separate
+  GitHub repos with a `tool.json` manifest (`start`, optional `setup`, `health`, `default_port`,
+  `env`); install by `owner/repo` (or a local folder) into the repo's `tools/<id>/` root
+  (safe tarball extract, 100 MB cap), start it on a free loopback port, and embed its UI in an
+  iframe. Stop kills the whole process group and reaps the child; Uninstall removes the folder.
+  Registry (`.key-router/tools.json`) is tracked; runtime/logs/state are gitignored. The old
+  `~/.key-router/` tree is migrated on first use.
+- **Tool credentials** — `secrets.json` gains a `tool_keys` section. A manifest declares them
+  (`"GITHUB_TOKEN": "tool:github"`) and each tool configures them **in its own Settings UI**; reads and
+  writes go through `/api/tools/<id>/credentials/<name>` and require that tool's per-start
+  `X-Tool-Token`. The dashboard only ever sees masked previews.
+- **Git workspace tool** (`tools/git-tool/`, standalone FastAPI + Vite) — GitHub token status,
+  branch page (local above remote; every remote branch compared against the selected local branch or
+  the default branch with ahead/behind, commit and file diffs both ways; a lane-drawn commit/merge
+  graph; switching local branches), and pull requests/issues (list, detail, create, comment,
+  open/close). Can be registered from a local folder while developing or installed from GitHub.
+- **Git tool workflows** — a **Workflow** tab runs the collaborator loop with a step-by-step log:
+  `checkout base → pull --ff-only → checkout -b <task>`; merge the base into a task branch
+  (`checkout base → pull → checkout task → merge base`); stage-all + commit; push with upstream.
+  Network commands authenticate with the tool's GitHub token through `GIT_CONFIG_*` env vars, so
+  the token never appears in argv or in the repo config. Pull requests can be merged from the PR
+  detail (merge commit / squash / rebase).
+- **PR pages split by role** — pull request creation now lives at the end of the Workflow tab
+  (no generic form). Everyone gets **My pull requests** (own PRs with state + GitHub link);
+  owners also get the full **Pull requests** page with merge controls. Lists fetch `state=all`
+  and filter locally so a merged PR stays visible under the "open" chip.
+- **Issues & discussions** — the issues page is rebuilt around a segmented control: issues (state
+  chips, labels, detail, comments, create, open/close) and repository discussions read through the
+  GitHub GraphQL API (title, category, author, comment count, link). A missing `discussion` scope
+  degrades to an inline message instead of a broken page.
+- **One Sync button** — the repo header's refresh/fetch pair is merged into a single Sync that
+  runs `git fetch --prune` and bumps a version every panel watches, so branches, PRs, issues and
+  counts reload in place instead of after switching tabs. Tab counts are also fetched eagerly on
+  repo selection.
+- **Repo discovery** in the Git tool is token-first — every repo the token can see is listed with
+  its role (`owner` / `collaborator` / `organization_member`) and `allowed_roots` are scanned
+  (depth 3, pruned, capped) only to mark which of them have a local clone. Clones the token cannot
+  reach are hidden; with no token the list falls back to the local scan. Remote-only repos show
+  “not found on this machine (or outside allowed roots)”. Sidebar search, All/Local/Remote/Pinned
+  filters and pinning; scan roots, depth and refresh live in the tool's Settings tab.
+- **Persistent tool state** — `tool.json` can declare `"TOOL_DATA": "tool:data"`; the hub creates
+  `.key-router/data/<id>/` and passes it. The Git tool stores its cache, pins and recent repos
+  there (`state.json`).
+- **Tool reinstall** — the registry records each tool's source repo (local installs read it from the
+  git remote). If the install folder is deleted, the card shows **Reinstall** and downloads the
+  package again from that repo; without a recorded repo it asks for `owner/repo` once.
+
+### Changed
+
+- **Shared process helpers** — `kill_tree` / `pid_alive` / `reap` moved to `proxy/process_utils.py`;
+  `pid_alive` now treats zombies as dead so stopped bridge and tool processes do not linger.
+- **Tool restart keeps the session token** — `restart` no longer invalidates an embedded iframe, and
+  the dashboard picks up a changed `frame_url` without a manual reload.
+- **Tool↔UI API version handshake** — `/health` and `/api/settings` report `api_version`; the Git tool
+  UI shows an explicit “backend is outdated, restart it” banner instead of silently breaking when a
+  new frontend runs against an old process.
+- **Tool state moved into the repository** — the hub's registry, tool logs and per-tool data now
+  live in `<repo>/.key-router/` (`tools.json`, `logs/<id>.log`, `data/<id>/`) instead of
+  `~/.key-router/`. A one-time migration moves the legacy tree on first access; installed tool code
+  stays in `<repo>/tools/<id>/`. `.key-router/tools.json` is **tracked** so a fresh clone knows each
+  tool's source repo and can Install it; `.key-router/runtime.json` (pid/session token/port), logs
+  and data are gitignored.
+- **Tools page install states** — a tool whose folder is missing renders greyed out as
+  **not installed** with an **Install** action (a corrupt install keeps **Reinstall**). The
+  in-dashboard add-tool form was removed; tools are registered personally.
+
 ## [0.1.33] — 2026-11-04
 
 ### Added

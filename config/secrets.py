@@ -20,7 +20,7 @@ def _get_secrets_path() -> str:
 
 
 def _empty() -> Dict[str, Dict[str, str]]:
-    return {"keys": {}, "custom_keys": {}, "base_urls": {}}
+    return {"keys": {}, "custom_keys": {}, "base_urls": {}, "tool_keys": {}}
 
 
 def _read_raw() -> Dict[str, Any]:
@@ -164,3 +164,38 @@ def reset_builtin_base_url(name: str) -> bool:
 
 def builtin_key_source(name: str) -> str:
     return "json" if get_builtin_key(name) else "missing"
+
+
+def get_tool_key(name: str) -> str:
+    if not name:
+        return ""
+    return load_secrets()["tool_keys"].get(name, "")
+
+
+def set_tool_key(name: str, value: str) -> None:
+    name = (name or "").strip()
+    value = (value or "").strip()
+    if not name:
+        raise ValueError("Tool credential name is required")
+    if not value:
+        raise ValueError("Tool credential value is required")
+    data = load_secrets()
+    data["tool_keys"][name] = value
+    save_secrets(data)
+
+
+def delete_tool_key(name: str) -> bool:
+    data = load_secrets()
+    if name not in data["tool_keys"]:
+        return False
+    del data["tool_keys"][name]
+    save_secrets(data)
+    return True
+
+
+def list_tool_keys() -> Dict[str, Dict[str, str]]:
+    """Masked view for the dashboard; raw values never leave the proxy."""
+    return {
+        name: {"has_key": True, "preview": mask_secret(value)}
+        for name, value in load_secrets()["tool_keys"].items()
+    }

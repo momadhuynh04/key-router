@@ -7,8 +7,6 @@ bridge process lifecycle. The proxy data path (`/v1/messages`, `/v1/responses`,
 from __future__ import annotations
 
 import asyncio
-import os
-import platform
 import signal
 import subprocess
 import sys
@@ -31,38 +29,11 @@ from bridge.config import (
     validate_agent,
     validate_config,
 )
+from proxy.process_utils import kill_tree as _kill_tree, pid_alive as _pid_alive, tail_file
 
 router = APIRouter()
 
 HEALTH_TIMEOUT = 2.0
-
-
-def _kill_tree(pid: int, sig: int = signal.SIGTERM) -> None:
-    if platform.system() == "Windows":
-        try:
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(pid)],
-                capture_output=True,
-                timeout=10,
-            )
-        except Exception:
-            pass
-        return
-    try:
-        os.killpg(os.getpgid(pid), sig)
-    except (ProcessLookupError, PermissionError, OSError):
-        try:
-            os.kill(pid, sig)
-        except OSError:
-            pass
-
-
-def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
 
 
 def _read_pid() -> Optional[int]:
@@ -330,16 +301,7 @@ async def bridge_stop():
 
 
 async def _tail_log(lines: int) -> str:
-    def _read() -> str:
-        if not LOG_PATH.exists():
-            return "(no log yet)"
-        try:
-            content = LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError as e:
-            return f"(could not read the log: {e})"
-        return "\n".join(content[-lines:]) if content else "(log is empty)"
-
-    return await asyncio.to_thread(_read)
+    return await asyncio.to_thread(tail_file, LOG_PATH, lines)
 
 
 @router.get("/api/bridge/logs")
