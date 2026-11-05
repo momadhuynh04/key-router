@@ -18,6 +18,7 @@ class TestRunRequest(BaseModel):
     model: str = ""
     workdir: str
     timeout_sec: Optional[int] = None
+    scenario: str = "quick-check"
     image: Optional[TestImage] = None
 
 
@@ -41,6 +42,7 @@ async def create_test_run(request: TestRunRequest):
             model=request.model,
             workdir=request.workdir,
             timeout_sec=request.timeout_sec,
+            scenario=request.scenario,
             image_media_type=request.image.media_type if request.image else None,
             image_base64=request.image.data_base64 if request.image else None,
         )

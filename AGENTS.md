@@ -152,12 +152,13 @@ its own repo later). `runner.proxy_env()` sets `ANTHROPIC_BASE_URL` etc. locally
 | `errors.py` | Anthropic/OpenAI/Responses error shapes. |
 | `retry.py` | `AGENTIC_RETRY_ATTEMPTS = 3` and generic retry helpers (routers currently implement retry inline). |
 | `image_utils.py` | Internal image block conversions: data URL / `image_url` / `inlineData`. |
+| `websearch.py` | `web_search` tool: query → your SearXNG instance (`secrets.json` → Settings → Web search), plus the in-process tool loop both ingresses use. |
 
 ### `provider/` — upstream adapters
 
 | File | Responsibility |
 | ---- | -------------- |
-| `base.py` | `BaseProvider` ABC: `translate_request`, `translate_response`, `stream`, `generate`. |
+| `base.py` | `BaseProvider` ABC: `translate_request`, `translate_response`, `stream`, `generate`, plus `web_search_tool` (server-side search a provider can offer). |
 | `openai_base.py` | Shared Anthropic↔OpenAI Chat translation, tool schema sanitizing, DeepSeek/thinking handling, streaming SSE. Most OpenAI-compatible providers inherit this. |
 | `openrouter/adapter.py` | `OpenRouterProvider` (OpenAI base) + `OpenRouterAnthropicProvider` (native `/v1/messages`). |
 | `deepseekplatform/adapter.py` | `DeepSeekAnthropicProvider` (native) + `DeepSeekOpenAIProvider`. |
@@ -289,7 +290,10 @@ suite in `tools/git-tool/tests/`; its `conftest.py` puts the package on `sys.pat
 16. **Do not edit `venv/`, `webui/node_modules/`, `projects/`, `backup/`, `bridge.log`,
     `bridge/state.json`, `.env`, `agents.json`, or `__pycache__/`.**
 17. **Test lab runs headless inside the proxy.** It reuses `bridge.runner`/`registry`/`sse` but does
-    not need the bridge process. Workdirs are fenced by `agents.json::allowed_roots`; artifacts go to
+    not need the bridge process. Scenarios are `quick-check` (image, HTML, OS/languages, Markdown
+    review) and `web-search` (the agent must call `web_search`; the run is judged on the URLs it
+    cites, and the check is skipped when SearXNG is not configured). Workdirs are fenced by
+    `agents.json::allowed_roots`; artifacts go to
     `<workdir>/.key-router-testlab/<run-id>/`; only one run is active at a time. A model written as
     `<builtin|custom-provider>/<model>` resolves **directly**, bypassing `config.json` routes, on every
     ingress. Codex gets `--skip-git-repo-check` and `-i <path>` for images; Claude gets image blocks
@@ -298,7 +302,7 @@ suite in `tools/git-tool/tests/`; its `conftest.py` puts the package on `sys.pat
     Responses `reasoning` items (never assistant text); Codex echoes them back and
     `responses_to_anthropic` re-attaches them to the `tool_use` message. DeepSeek `/anthropic`
     rejects tool turns whose thinking was dropped (`content[].thinking ... must be passed back`).
-19. **Personal tools run as separate loopback processes.** Install goes to the repo's `tools/<id>/`
+19. **Personal tools run as separate loopback processes.**Install goes to the repo's `tools/<id>/`
     root (gitignored). `.key-router/tools.json` is **tracked** (catalog + source repo); runtime
     (`runtime.json`), logs and data are gitignored. A tool's
     credentials live in `secrets.json::tool_keys`, declared by `tool.json` (`"ENV": "tool:<name>"`).
@@ -310,6 +314,14 @@ suite in `tools/git-tool/tests/`; its `conftest.py` puts the package on `sys.pat
     `.key-router/data/<id>/` (created on start) for persistent tool state. Stop must kill the process
     group **and** reap it — a stopped child is a zombie, and `kill(pid, 0)` still succeeds for zombies
     (handled in `proxy/process_utils.py`).
+20. **Web search runs inside the proxy.** Both ingresses always get it. `websearch.enable()` removes a
+    client-declared hosted search tool (and any `WebSearch` call the model emits — Claude Code's own
+    tool is permission-gated and would be denied) and adds a real `web_search` function tool;
+    `run_stream` / `run_generate` run the tool loop in-process (search → tool_result → re-call), so
+    the client only ever sees the final answer. The backend is a SearXNG instance whose URL is set in
+    Settings → Web search (`secrets.json::web_search.searxng_url`, read per search, so no restart).
+    There is no scraper fallback: without the URL the tool is not offered and a call reports it is
+    unconfigured. Three searches per turn; the tool is withdrawn after that.
 
 ---
 
@@ -330,7 +342,8 @@ No keys or base URLs live here. Manage them in the dashboard **Settings** tab (s
   "keys": {"openrouter": "...", "deepseek": "...", "google": "..."},
   "custom_keys": {"<provider-id>": "..."},
   "base_urls": {"openrouter": "...", "deepseek_anthropic": "...", "deepseek_openai": "...", "google": "..."},
-  "tool_keys": {"github": "..."}
+  "tool_keys": {"github": "..."},
+  "web_search": {"searxng_url": "http://127.0.0.1:8888"}
 }
 ```
 

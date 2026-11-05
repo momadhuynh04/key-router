@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse
 from config.logging import logger, log_error, log_warn
 from models.openai_compat import ResponsesRequest
 from proxy.router import provider_router
+from proxy import websearch
 from proxy.errors import openai_error
 from proxy.responses_ingress import (
     responses_to_anthropic,
@@ -45,10 +46,13 @@ async def handle_responses(request: ResponsesRequest):
             for t in flat_tools
             if isinstance(t, dict) and t.get("name")
         }
-        if flat_tools:
-            logger.info(f"[🔧] Codex tools unwrapped: {list(tool_schemas.keys())}")
-
         anthropic_request = responses_to_anthropic(request)
+        websearch.enable(anthropic_request, always=True)
+        if flat_tools:
+            logger.info(
+                f"[🔧] Codex tools unwrapped: {list(tool_schemas.keys())} "
+                f"| web_search={'on' if getattr(anthropic_request, 'web_search', False) else 'off'}"
+            )
         provider = provider_router.get_provider_for_openai(anthropic_request.model)
         provider_request_body = await provider.translate_request(anthropic_request)
 
@@ -58,8 +62,13 @@ async def handle_responses(request: ResponsesRequest):
                 for attempt in range(AGENTIC_RETRY_ATTEMPTS):
                     events_buffer = []
                     try:
-                        async for ev in provider.stream(provider_request_body):
-                            events_buffer.append(ev)
+                        if getattr(anthropic_request, "web_search", False):
+                            events_buffer = await websearch.run_stream(
+                                provider, anthropic_request, provider_request_body
+                            )
+                        else:
+                            async for ev in provider.stream(provider_request_body):
+                                events_buffer.append(ev)
                     except httpx.HTTPStatusError as e:
                         error_detail = e.response.text if hasattr(e, 'response') else str(e)
                         error_msg = f"Provider API Error {e.response.status_code}: {error_detail[:2000]}"
@@ -114,7 +123,12 @@ async def handle_responses(request: ResponsesRequest):
             return StreamingResponse(event_generator(), media_type="text/event-stream")
         else:
             for attempt in range(AGENTIC_RETRY_ATTEMPTS):
-                response = await provider.generate(provider_request_body)
+                if getattr(anthropic_request, "web_search", False):
+                    response = await websearch.run_generate(
+                        provider, anthropic_request, provider_request_body
+                    )
+                else:
+                    response = await provider.generate(provider_request_body)
                 _rt = response_text(response)
                 _has_tool = any(b.get("type") == "tool_use" for b in response.content)
                 narrated = tool_schemas and not _has_tool and looks_like_action_narration(_rt)

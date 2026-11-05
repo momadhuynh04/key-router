@@ -116,3 +116,22 @@ def test_base_url_validation(client):
     response = client.put("/api/settings/base-urls/google", json={"value": "not-a-url"})
 
     assert response.status_code == 400
+
+
+def test_web_search_roundtrip(client):
+    assert client.get("/api/settings").json()["web_search"] == {"searxng_url": ""}
+
+    response = client.put("/api/settings/web-search", json={"value": "http://127.0.0.1:8888/"})
+
+    assert response.status_code == 200
+    assert response.json()["web_search"]["searxng_url"] == "http://127.0.0.1:8888"
+
+    response = client.delete("/api/settings/web-search")
+
+    assert response.status_code == 200
+    assert response.json()["web_search"]["searxng_url"] == ""
+
+
+def test_web_search_url_validation(client):
+    assert client.put("/api/settings/web-search", json={"value": "not-a-url"}).status_code == 400
+    assert client.put("/api/settings/web-search", json={"value": "   "}).status_code == 400

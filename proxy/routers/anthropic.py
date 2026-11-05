@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from config.logging import logger, log_error, log_warn
 from models.anthropic import AnthropicRequest
 from proxy.router import provider_router
+from proxy import websearch
 from proxy.errors import anthropic_error
 from proxy.retry import AGENTIC_RETRY_ATTEMPTS
 from proxy.responses_ingress import has_native_tool_call, stream_text, looks_like_action_narration, AGENTIC_NUDGE, _is_garbled
@@ -75,6 +76,7 @@ async def handle_messages(request: AnthropicRequest):
     logger.info(f"[🚀] Received request from Claude Code for model: {request.model} (tools={len(request.tools or [])} max_tokens={request.max_tokens} stream={request.stream})")
     _fold_system_messages(request)
     _strip_thinking_display(request)
+    websearch.enable(request, always=True)
     try:
         provider = provider_router.get_provider_for_anthropic(request.model)
         anthropic_req = request
@@ -96,10 +98,20 @@ async def handle_messages(request: AnthropicRequest):
                     buf: list = []
                     truncated = False
                     try:
-                        async for ev in provider.stream(provider_request_body):
-                            buf.append(ev)
-                            if ev.data.get("type") == "message_delta" and ev.data.get("delta", {}).get("stop_reason") == "max_tokens":
-                                truncated = True
+                        if getattr(anthropic_req, "web_search", False):
+                            buf = await websearch.run_stream(
+                                provider, anthropic_req, provider_request_body
+                            )
+                            truncated = any(
+                                ev.data.get("type") == "message_delta"
+                                and ev.data.get("delta", {}).get("stop_reason") == "max_tokens"
+                                for ev in buf
+                            )
+                        else:
+                            async for ev in provider.stream(provider_request_body):
+                                buf.append(ev)
+                                if ev.data.get("type") == "message_delta" and ev.data.get("delta", {}).get("stop_reason") == "max_tokens":
+                                    truncated = True
                     except httpx.HTTPStatusError as e:
                         error_detail = e.response.text if hasattr(e, 'response') else str(e)
                         error_msg = f"Provider API Error {e.response.status_code}: {error_detail[:2000]}"
@@ -158,7 +170,12 @@ async def handle_messages(request: AnthropicRequest):
             from proxy.responses_ingress import response_text
             base_max_ns = anthropic_req.max_tokens
             for attempt in range(AGENTIC_RETRY_ATTEMPTS):
-                response = await provider.generate(provider_request_body)
+                if getattr(anthropic_req, "web_search", False):
+                    response = await websearch.run_generate(
+                        provider, anthropic_req, provider_request_body
+                    )
+                else:
+                    response = await provider.generate(provider_request_body)
                 has_tool = any(b.get("type") == "tool_use" for b in response.content)
                 text = response_text(response)
                 truncated = response.stop_reason == "max_tokens"

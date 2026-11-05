@@ -290,3 +290,78 @@ def test_codex_argv_attaches_images(tmp_path):
 
     assert "--skip-git-repo-check" in argv
     assert argv[argv.index("-i") + 1] == "/tmp/shot.png"
+
+
+@pytest.mark.asyncio
+async def test_web_search_scenario_uses_search_prompt(env):
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/testlab/runs",
+            json={"cli": "claude", "workdir": str(env), "scenario": "web-search"},
+        )
+        assert response.status_code == 202
+        run = await _wait(client, response.json()["run_id"])
+
+    assert run["scenario"] == "web-search"
+    assert "web_search" in CAPTURED["prompt"]
+    checks = _checks(run)
+    assert "web_search" in checks and "sources" in checks
+    assert "html" not in checks
+
+
+@pytest.mark.asyncio
+async def test_unknown_scenario_rejected(env):
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/testlab/runs",
+            json={"cli": "claude", "workdir": str(env), "scenario": "nope"},
+        )
+
+    assert response.status_code == 400
+
+
+def _web_search_run(tmp_path, answer, report):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / testlab.MD_NAME).write_text(report, encoding="utf-8")
+    run = testlab.TestRun(
+        id="run-1", cli="claude", model="", workdir=str(tmp_path),
+        run_dir=str(run_dir), scenario="web-search",
+    )
+    run.final_text = answer
+    return run
+
+
+def test_web_search_checks_pass_with_cited_urls(tmp_path, monkeypatch):
+    monkeypatch.setattr(testlab.websearch, "configured", lambda: True)
+    run = _web_search_run(
+        tmp_path,
+        "1. Python — https://www.python.org/downloads/\n2. Docs — https://docs.python.org/3/",
+        "# Report\n\nhttps://www.python.org/downloads/\n",
+    )
+
+    checks = {check["id"]: check for check in testlab._web_search_checks(run)}
+
+    assert checks["web_search"]["status"] == "pass"
+    assert checks["sources"]["status"] == "pass"
+
+
+def test_web_search_checks_fail_without_urls(tmp_path, monkeypatch):
+    monkeypatch.setattr(testlab.websearch, "configured", lambda: True)
+    run = _web_search_run(tmp_path, "I could not search.", "# Report\n\nNo sources.\n")
+
+    checks = {check["id"]: check for check in testlab._web_search_checks(run)}
+
+    assert checks["web_search"]["status"] == "fail"
+    assert checks["sources"]["status"] == "fail"
+
+
+def test_web_search_checks_skip_when_unconfigured(tmp_path, monkeypatch):
+    monkeypatch.setattr(testlab.websearch, "configured", lambda: False)
+    run = _web_search_run(tmp_path, "anything", "# Report\n\nhttps://example.com/\n")
+
+    checks = {check["id"]: check for check in testlab._web_search_checks(run)}
+
+    assert checks["web_search"]["status"] == "skip"

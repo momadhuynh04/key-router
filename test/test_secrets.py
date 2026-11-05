@@ -63,7 +63,9 @@ def test_base_url_defaults_and_override(secrets_path):
 
 
 def test_missing_secrets_file_is_empty(secrets_path):
-    assert store.load_secrets() == {"keys": {}, "custom_keys": {}, "base_urls": {}, "tool_keys": {}}
+    assert store.load_secrets() == {
+        "keys": {}, "custom_keys": {}, "base_urls": {}, "tool_keys": {}, "web_search": {},
+    }
 
 
 def test_tool_key_roundtrip(secrets_path):

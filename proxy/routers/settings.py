@@ -31,6 +31,10 @@ class BaseUrlValue(BaseModel):
     value: str
 
 
+class WebSearchValue(BaseModel):
+    value: str
+
+
 def _settings_dto() -> Dict[str, Any]:
     values = secrets_store.load_secrets()
 
@@ -67,7 +71,12 @@ def _settings_dto() -> Dict[str, Any]:
             "source": "json" if values["base_urls"].get(name) else "default",
         })
 
-    return {"keys": keys, "base_urls": base_urls, "secrets_path": "secrets.json"}
+    return {
+        "keys": keys,
+        "base_urls": base_urls,
+        "web_search": {"searxng_url": secrets_store.get_searxng_url()},
+        "secrets_path": "secrets.json",
+    }
 
 
 def _invalidate_caches() -> None:
@@ -139,4 +148,19 @@ async def reset_base_url(name: str):
         raise HTTPException(status_code=404, detail=f"Unknown base URL '{name}'")
     secrets_store.reset_builtin_base_url(name)
     _invalidate_caches()
+    return _settings_dto()
+
+
+@router.put("/api/settings/web-search")
+async def set_web_search(body: WebSearchValue):
+    value = body.value.strip()
+    if not re.match(r"^https?://\S+$", value):
+        raise HTTPException(status_code=400, detail="SearXNG URL must start with http:// or https://")
+    secrets_store.set_searxng_url(value)
+    return _settings_dto()
+
+
+@router.delete("/api/settings/web-search")
+async def reset_web_search():
+    secrets_store.delete_searxng_url()
     return _settings_dto()

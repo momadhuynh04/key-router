@@ -23,8 +23,10 @@ from bridge import config as bridge_config
 from bridge import registry as bridge_registry
 from bridge import runner as bridge_runner
 from bridge import sse as bridge_sse
+from proxy import websearch
 
 SCENARIO_ID = "quick-check"
+SCENARIO_WEB_SEARCH = "web-search"
 OUTPUT_DIR = ".key-router-testlab"
 HTML_NAME = "key-router-test.html"
 MD_NAME = "key-router-review.md"
@@ -36,6 +38,35 @@ MAX_TIMEOUT_SEC = 1800
 MAX_KEEP_RUNS = 20
 
 CLI_IDS = ("claude", "codex")
+SCENARIO_IDS = (SCENARIO_ID, SCENARIO_WEB_SEARCH)
+URL_RE = re.compile(r"https?://[^\s)\]\"'<>]+")
+
+
+def scenario_catalog() -> List[Dict[str, Any]]:
+    return [
+        {
+            "id": SCENARIO_ID,
+            "label": "Quick capability check",
+            "checks": [
+                "Image understanding",
+                "HTML file",
+                "OS and machine info",
+                "Installed languages",
+                "Markdown review",
+                f"≤ {SHELL_LIMIT} shell commands",
+            ],
+        },
+        {
+            "id": SCENARIO_WEB_SEARCH,
+            "label": "Web search check",
+            "checks": [
+                "Web search results",
+                "Sources in report",
+                f"≤ {SHELL_LIMIT} shell commands",
+            ],
+        },
+    ]
+
 
 IMAGE_EXTENSIONS = {
     "image/png": "png",
@@ -68,6 +99,7 @@ class TestRun:
     model: str
     workdir: str
     run_dir: str
+    scenario: str = SCENARIO_ID
     status: str = "running"
     error: str = ""
     started: float = field(default_factory=time.time)
@@ -113,7 +145,9 @@ def detect_languages() -> List[str]:
     ]
 
 
-def build_prompt(run_id: str, has_image: bool) -> str:
+def build_prompt(run_id: str, has_image: bool, scenario: str = SCENARIO_ID) -> str:
+    if scenario == SCENARIO_WEB_SEARCH:
+        return build_web_search_prompt(run_id)
     image_note = (
         "An image is attached to this message."
         if has_image
@@ -133,6 +167,25 @@ Tasks:
 5. Review the HTML file you just created and summarize the OS/language findings, then write `{MD_NAME}` inside the output directory. The review must mention `{HTML_NAME}`.
 
 Be concise and finish quickly.
+"""
+
+
+def build_web_search_prompt(run_id: str) -> str:
+    return f"""You are running a web search self-check. Use at most {SHELL_LIMIT} shell commands.
+Do not ask questions and do not install anything.
+
+Output directory (already created): {OUTPUT_DIR}/{run_id}
+
+Tasks:
+1. Call the `web_search` tool twice with two different keyword queries about current information
+   (for example "latest stable Python release" and "top story on Hacker News").
+2. In your final reply, list the top 3 results for each query with title and URL, and say which
+   query you used.
+3. Write `{MD_NAME}` inside the output directory containing both queries, the results with their
+   URLs, and one sentence about whether the search worked.
+
+Only report results the tool actually returned. If web search is unavailable, say so explicitly
+and do not invent titles or URLs. Be concise and finish quickly.
 """
 
 
@@ -304,6 +357,9 @@ def _feed_codex(run: TestRun, event: Dict[str, Any], state: _CodexState) -> None
 
 
 def _build_checks(run: TestRun) -> List[Dict[str, Any]]:
+    if run.scenario == SCENARIO_WEB_SEARCH:
+        return _web_search_checks(run)
+
     checks: List[Dict[str, Any]] = []
     run_dir = Path(run.run_dir)
 
@@ -357,6 +413,12 @@ def _build_checks(run: TestRun) -> List[Dict[str, Any]]:
                 f"Transcript did not mention: {', '.join(run.languages)}",
             ))
 
+    checks.extend(_budget_and_permission_checks(run))
+    return checks
+
+
+def _budget_and_permission_checks(run: TestRun) -> List[Dict[str, Any]]:
+    checks: List[Dict[str, Any]] = []
     if run.shell_count <= SHELL_LIMIT:
         checks.append(_check("shell_budget", "Shell budget", "pass", f"{run.shell_count} shell command(s) (limit {SHELL_LIMIT})"))
     else:
@@ -368,6 +430,41 @@ def _build_checks(run: TestRun) -> List[Dict[str, Any]]:
             checks.append(_check("permissions", "Permissions", "warn", f"Blocked: {names}"))
         else:
             checks.append(_check("permissions", "Permissions", "pass", "No permission denials"))
+    return checks
+
+
+def _web_search_checks(run: TestRun) -> List[Dict[str, Any]]:
+    """The proxy performs the search, so the client only sees the final answer —
+    judge the run by the sources it cites."""
+    checks: List[Dict[str, Any]] = []
+    report = _read_text(Path(run.run_dir) / MD_NAME)
+    answer = f"{run.final_text}\n{report}"
+    urls = {url.rstrip(".,);") for url in URL_RE.findall(answer)}
+
+    if not websearch.configured():
+        checks.append(_check(
+            "web_search", "Web search results", "skip",
+            "SearXNG is not configured (Settings → Web search)",
+        ))
+    elif "not configured" in answer.lower():
+        checks.append(_check(
+            "web_search", "Web search results", "fail",
+            "The proxy reported web search as unconfigured",
+        ))
+    elif len(urls) >= 2:
+        checks.append(_check("web_search", "Web search results", "pass", f"{len(urls)} URL(s) cited"))
+    else:
+        checks.append(_check(
+            "web_search", "Web search results", "fail",
+            "Fewer than 2 URLs in the answer — the search likely did not run",
+        ))
+
+    if report and URL_RE.search(report):
+        checks.append(_check("sources", "Sources in report", "pass", f"{MD_NAME} cites at least one URL"))
+    else:
+        checks.append(_check("sources", "Sources in report", "fail", f"{MD_NAME} missing or cites no URL"))
+
+    checks.extend(_budget_and_permission_checks(run))
     return checks
 
 
@@ -454,6 +551,7 @@ def start_run(
     timeout_sec: Optional[int] = None,
     image_media_type: Optional[str] = None,
     image_base64: Optional[str] = None,
+    scenario: str = SCENARIO_ID,
 ) -> TestRun:
     global ACTIVE_RUN_ID
     if ACTIVE_RUN_ID and ACTIVE_RUN_ID in TASKS and not TASKS[ACTIVE_RUN_ID].done():
@@ -463,6 +561,9 @@ def start_run(
         raise ValueError(f"cli must be one of {', '.join(CLI_IDS)}")
     if not cli_available(cli):
         raise ValueError(f"{cli!r} was not found in PATH")
+    scenario = (scenario or SCENARIO_ID).strip().lower()
+    if scenario not in SCENARIO_IDS:
+        raise ValueError(f"scenario must be one of {', '.join(SCENARIO_IDS)}")
 
     cfg = bridge_config.ensure_config()
     resolved = _validate_workdir(workdir, cfg)
@@ -494,7 +595,7 @@ def start_run(
         shutil.rmtree(run_dir, ignore_errors=True)
         raise
 
-    prompt = build_prompt(run_id, has_image)
+    prompt = build_prompt(run_id, has_image, scenario)
     if cli == "claude":
         stdin_payload = bridge_registry.claude_stdin(prompt, [image_block] if image_block else [])
         stream_input = has_image
@@ -525,6 +626,7 @@ def start_run(
         model=(model or "").strip(),
         workdir=str(resolved),
         run_dir=str(run_dir),
+        scenario=scenario,
         timeout_sec=timeout,
         has_image=has_image,
         languages=detect_languages(),
@@ -580,19 +682,8 @@ def stop_run(run_id: str) -> Optional[TestRun]:
 def meta() -> Dict[str, Any]:
     cfg = bridge_config.ensure_config()
     return {
-        "scenario": {
-            "id": SCENARIO_ID,
-            "label": "Quick capability check",
-            "shell_limit": SHELL_LIMIT,
-            "checks": [
-                "Image understanding",
-                "HTML file",
-                "OS and machine info",
-                "Installed languages",
-                "Markdown review",
-                f"≤ {SHELL_LIMIT} shell commands",
-            ],
-        },
+        "scenarios": scenario_catalog(),
+        "scenario": next(item for item in scenario_catalog() if item["id"] == SCENARIO_ID),
         "clis": [
             {"id": "claude", "label": "Claude Code", "available": cli_available("claude")},
             {"id": "codex", "label": "Codex", "available": cli_available("codex")},

@@ -20,7 +20,7 @@ def _get_secrets_path() -> str:
 
 
 def _empty() -> Dict[str, Dict[str, str]]:
-    return {"keys": {}, "custom_keys": {}, "base_urls": {}, "tool_keys": {}}
+    return {"keys": {}, "custom_keys": {}, "base_urls": {}, "tool_keys": {}, "web_search": {}}
 
 
 def _read_raw() -> Dict[str, Any]:
@@ -199,3 +199,25 @@ def list_tool_keys() -> Dict[str, Dict[str, str]]:
         name: {"has_key": True, "preview": mask_secret(value)}
         for name, value in load_secrets()["tool_keys"].items()
     }
+
+
+def get_searxng_url() -> str:
+    return load_secrets()["web_search"].get("searxng_url", "")
+
+
+def set_searxng_url(value: str) -> None:
+    value = (value or "").strip().rstrip("/")
+    if not value:
+        raise ValueError("SearXNG URL is required")
+    data = load_secrets()
+    data["web_search"]["searxng_url"] = value
+    save_secrets(data)
+
+
+def delete_searxng_url() -> bool:
+    data = load_secrets()
+    if "searxng_url" not in data["web_search"]:
+        return False
+    del data["web_search"]["searxng_url"]
+    save_secrets(data)
+    return True

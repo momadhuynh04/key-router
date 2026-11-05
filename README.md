@@ -55,7 +55,8 @@
 | **Skills manager** | Launcher → Skills: Installed/Browse, Claude Code/Codex split, global/project scope, real enable/disable, SKILL.md preview, install from skills.sh or a repo via `npx skills`. |
 | **Custom providers** | Any OpenAI/Anthropic API via the **Providers** tab or `python -m cli add-provider`. One raw key per provider in `secrets.json`; the dashboard only sees masked previews. |
 | **Settings & keys** | **Settings** tab: built-in/custom API keys and built-in base URLs stored in `secrets.json` (gitignored, `0600`), applied on the next request — no restart. |
-| **Test lab** | Headless **Claude Code / Codex** runs with optional image input and a `provider/model` override that bypasses routing; checks image understanding, HTML/Markdown artifacts, OS/languages and the ≤10 shell budget. |
+| **Built-in web search** | A **self-hosted SearXNG** backend (no third-party search API, no key) gives any routed model a real `web_search` tool on both ingresses. The proxy runs the tool loop, so the client only sees the final answer; the SearXNG URL lives in **Settings → Web search**. |
+| **Test lab** | Headless **Claude Code / Codex** runs with optional image input and a `provider/model` override that bypasses routing. Scenarios: `quick-check` (image understanding, HTML/Markdown artifacts, OS/languages, ≤10 shell commands) and `web-search` (must search and cite URLs). |
 | **Personal tools** | **Tools** tab: install small tools from your own GitHub repos (or a local folder), start/stop each on a loopback port, and open its UI inside the dashboard. Tool credentials are configured in each tool's own Settings and stored in `secrets.json`; a Git workspace tool ships in `tools/git-tool`. |
 | **IDE auto-detect & launch** | VS Code, VSCodium, Cursor — sets `~/.claude/settings.json`, `~/.codex/config.toml`, `disableLoginPrompt`. |
 | **WebUI** | React + Tailwind dashboard: routing, providers, test lab, launcher, agents and settings. |
@@ -219,6 +220,9 @@ The **Settings** tab manages credentials and upstream endpoints:
 - **Provider API keys** for OpenRouter, DeepSeek, Google AI Studio, plus one key per custom provider.
   The dashboard only ever receives a masked preview.
 - **Base URLs** for the built-in providers. **Reset** restores the built-in default.
+- **Web search** — the SearXNG URL that powers the `web_search` tool. Run your own instance
+  (`docker run -d --name keyrouter-searxng -p 8888:8080 --restart=always searxng/searxng:latest`)
+  and save `http://127.0.0.1:8888`. Without a URL the tool stays off, and the run/answer says so.
 
 Keys and base URLs are read on every provider instantiation, so saving takes effect on the next
 request — no proxy restart. `secrets.json` is gitignored and written atomically with `0600` on POSIX.
@@ -226,14 +230,14 @@ request — no proxy restart. `secrets.json` is gitignored and written atomicall
 ### 4. Test lab
 
 **Test lab** runs one headless agent turn on **Claude Code** or **Codex** against a folder inside
-`allowed_roots`, with an optional image. It verifies:
+`allowed_roots`, with an optional image. Pick a scenario first:
 
-- the image was understood (vision test),
-- `key-router-test.html` was written and looks like valid HTML,
-- the agent found the host OS/machine information,
-- it listed installed language toolchains,
-- `key-router-review.md` reviews the HTML and mentions it,
-- the run stayed within 10 shell commands.
+- `quick-check` (default) verifies the image was understood, `key-router-test.html` was written and
+  looks like valid HTML, the agent found the host OS/machine information, listed installed language
+  toolchains, wrote `key-router-review.md` reviewing the HTML, and stayed within 10 shell commands.
+- `web-search` asks the agent to run two searches and write a sourced report; the run is judged on
+  the URLs it cites (skipped when SearXNG is not configured). The proxy performs the search, so the
+  client only sees the answer.
 
 The model field accepts `provider/model` (e.g. `openrouter/anthropic/claude-sonnet-4.5`,
 `deepseekplatform/deepseek-flash`), which **bypasses Model routing** and calls that provider directly;
@@ -619,13 +623,13 @@ Vào tab **Model routing**: `Opus / Sonnet / Haiku / Codex` → chọn **Target 
 
 Tab **Agent launcher**: **Claude Code** mở terminal đã set `ANTHROPIC_BASE_URL`, **Codex** tự ghi `~/.codex/config.toml`, **VS Code / Cursor / VSCodium** tự detect qua `PATH` — bấm là chạy.
 
-**Test lab:** tab **Test lab** chạy 1 lượt agent headless trên **Claude Code** hoặc **Codex** trong thư mục thuộc `allowed_roots`, kèm ảnh nếu muốn. Nó tự kiểm tra: hiểu ảnh, tạo `key-router-test.html`, đọc OS/cấu hình máy, liệt kê ngôn ngữ đã cài, viết `key-router-review.md`, và giới hạn ≤10 lệnh shell. Ô model nhận `provider/model` (vd `deepseekplatform/deepseek-flash`) để **bỏ qua Model routing**; artifact nằm ở `<workdir>/.key-router-testlab/<run-id>/`.
+**Test lab:** tab **Test lab** chạy 1 lượt agent headless trên **Claude Code** hoặc **Codex** trong thư mục thuộc `allowed_roots`, kèm ảnh nếu muốn. Chọn scenario bằng chip cạnh Claude Code/Codex: `quick-check` (mặc định) kiểm tra hiểu ảnh, tạo `key-router-test.html`, đọc OS/cấu hình máy, liệt kê ngôn ngữ đã cài, viết `key-router-review.md`, giới hạn ≤10 lệnh shell; `web-search` bắt agent gọi `web_search` 2 lần và viết report có nguồn — chấm theo các URL nó trích (skip nếu chưa cấu hình SearXNG). Ô model nhận `provider/model` (vd `deepseekplatform/deepseek-flash`) để **bỏ qua Model routing**; artifact nằm ở `<workdir>/.key-router-testlab/<run-id>/`.
 
 **Tools (personal):** tab **Tools** để cài tool cá nhân từ GitHub của bạn. Mỗi tool là một repo riêng có `tool.json` (`start`, `setup`, `health`, `env`…). Tool đã đăng ký hiện trong tab; bấm **Install** (nếu chưa có folder) hoặc **Start**: key-router tải package vào `tools/<id>/` trong repo key-router, chạy command trên một port loopback, rồi nhúng UI của tool vào dashboard bằng iframe. Token (vd GitHub PAT) được nhập trong **Settings của chính tool** (không phải trang Tools), lưu ở `secrets.json` → `tool_keys`, và chỉ tool đang chạy đọc được qua endpoint có session token; mỗi lần start có session token riêng. Tool đầu tiên là **Git workspace** (`tools/git-tool/`): xem branch kèm ahead/behind và commit cuối, tạo/switch branch, xem/tạo/comment PR và issue. Dev có thể đăng ký thẳng thư mục local, không cần publish lên GitHub. Nếu xoá thư mục của tool, card hiện **Reinstall** và tải lại từ repo GitHub đã lưu trong registry (tool local tự đọc remote git); nếu chưa lưu repo thì Reinstall hỏi `owner/repo` một lần. `.key-router/tools.json` được **track trong git** (ghi repo nguồn để clone mới vẫn Install được); `runtime.json`, logs và data thì gitignored.
 
 **Phát hiện repo** trong Git tool chạy 2 nguồn: liệt kê mọi repo mà token thấy (`owner` / `collaborator` / `organization_member`) và quét `allowed_roots` (depth 3) để tìm bản clone. Repo GitHub có clone trên máy được đánh dấu local; nếu không sẽ hiện **“not found on this machine (or outside allowed roots)”**. Sidebar có search, filter All/Local/Remote/Pinned và ghim repo; roots/depth và refresh nằm trong tab **Settings** của tool. State (cache/pin/recent) lưu ở `.key-router/data/<tool-id>/` (gitignored, ngay trong repo).
 
-**Settings:** tab **Settings** quản lý API key cho OpenRouter / DeepSeek / Google và từng custom provider (lưu `secrets.json`, áp dụng ngay không cần restart; dashboard chỉ thấy preview) cùng Base URL của 3 provider builtin. `secrets.json` là nguồn key duy nhất.
+**Settings:** tab **Settings** quản lý API key cho OpenRouter / DeepSeek / Google và từng custom provider (lưu `secrets.json`, áp dụng ngay không cần restart; dashboard chỉ thấy preview), Base URL của 3 provider builtin, và **Web search** — URL SearXNG cho tool `web_search` (`docker run -d --name keyrouter-searxng -p 8888:8080 --restart=always searxng/searxng:latest` rồi lưu `http://127.0.0.1:8888`; chưa có URL thì tool tắt hẳn, không scrape Google/Bing). `secrets.json` là nguồn key duy nhất.
 
 **Custom provider:** vào tab **Providers** → **+ Add provider** → điền ID, Base URL (`https://api.xxx/v1`), API key (lưu theo provider ID trong `secrets.json`) → Models. Hoặc CLI `python -m cli add-provider ... --api-key "sk-..."` như bản tiếng Anh.
 

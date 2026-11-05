@@ -20,6 +20,7 @@ type Run = {
   id: string
   cli: Lane
   model: string
+  scenario: string
   workdir: string
   run_dir: string
   status: 'running' | 'complete' | 'error' | 'stopped'
@@ -42,8 +43,11 @@ type Run = {
   failed?: number
 }
 
+type Scenario = { id: string; label: string; checks: string[] }
+
 type Meta = {
   scenario: { id: string; label: string; shell_limit: number; checks: string[] }
+  scenarios: Scenario[]
   clis: { id: Lane; label: string; available: boolean }[]
   allowed_roots: string[]
   default_timeout_sec: number
@@ -89,6 +93,7 @@ export default function TestLabPanel() {
   const [meta, setMeta] = useState<Meta | null>(null)
   const [modelOptions, setModelOptions] = useState<string[]>([])
   const [lane, setLane] = useState<Lane>('claude')
+  const [scenario, setScenario] = useState('quick-check')
   const [workdir, setWorkdir] = useState('')
   const [model, setModel] = useState('')
   const [timeoutSec, setTimeoutSec] = useState(300)
@@ -187,6 +192,7 @@ export default function TestLabPanel() {
     try {
       const payload: Record<string, unknown> = {
         cli: lane,
+        scenario,
         model: model.trim(),
         workdir: workdir.trim(),
         timeout_sec: Number(timeoutSec) || undefined,
@@ -235,6 +241,9 @@ export default function TestLabPanel() {
 
   const available = (id: Lane) => Boolean(meta?.clis.find(c => c.id === id)?.available)
   const running = Boolean(activeId)
+  const scenarios = meta?.scenarios ?? []
+  const activeScenario = scenarios.find(item => item.id === scenario) ?? meta?.scenario
+  const scenarioLabel = (id: string) => scenarios.find(item => item.id === id)?.label ?? id
 
   return (
     <div className="space-y-6">
@@ -242,10 +251,26 @@ export default function TestLabPanel() {
         <div className="mb-5">
           <h2 className="text-[13px] font-semibold tracking-widest uppercase text-text-secondary">Test lab</h2>
           <p className="mt-1.5 max-w-3xl text-sm leading-relaxed text-text-secondary">
-            Run one headless agent turn and verify image understanding, file writing, OS/language discovery and a
-            Markdown review. Model overrides use <code className="rounded border border-border bg-surface-850 px-1.5 py-0.5 font-mono text-xs">provider/model</code> and
+            {scenario === 'web-search'
+              ? 'Run one headless turn that must call the built-in web_search tool and cite real sources. The proxy performs the search, so the run is judged on the URLs the agent reports.'
+              : 'Run one headless agent turn and verify image understanding, file writing, OS/language discovery and a Markdown review.'}
+            {' '}Model overrides use <code className="rounded border border-border bg-surface-850 px-1.5 py-0.5 font-mono text-xs">provider/model</code> and
             bypass Model routing; plain names use the current route.
           </p>
+        </div>
+
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <span className="text-[10px] font-medium uppercase tracking-widest text-text-muted">Scenario</span>
+          <div className="inline-flex rounded-full border border-border bg-surface-850 p-1 gap-1">
+            {scenarios.map(item => (
+              <button
+                key={item.id}
+                onClick={() => setScenario(item.id)}
+                disabled={running}
+                className={`px-4 py-1.5 rounded-full text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${scenario === item.id ? 'bg-brand text-white shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}
+              >{item.label}</button>
+            ))}
+          </div>
         </div>
 
         <div className="mb-5 inline-flex rounded-full border border-border bg-surface-850 p-1 gap-1">
@@ -285,12 +310,12 @@ export default function TestLabPanel() {
             </p>
           </div>
           <div>
-            <label className={labelCls}>Image (optional)</label>
+            <label className={labelCls}>Image {scenario === 'web-search' ? '(not used)' : '(optional)'}</label>
             <input
               ref={fileInputRef}
               type="file"
               accept="image/png,image/jpeg,image/webp,image/gif"
-              disabled={running}
+              disabled={running || scenario === 'web-search'}
               onChange={e => pickImage(e.target.files?.[0])}
               className="hidden"
             />
@@ -298,7 +323,7 @@ export default function TestLabPanel() {
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={running}
+                disabled={running || scenario === 'web-search'}
                 className="h-9 shrink-0 rounded-full border border-border bg-surface-850 px-4 text-xs font-medium text-text-secondary transition-colors hover:bg-surface-800 disabled:cursor-not-allowed disabled:opacity-40"
               >Choose image…</button>
               <span className="min-w-0 flex-1 truncate text-xs text-text-muted">{image ? image.name : 'No file chosen'}</span>
@@ -326,16 +351,18 @@ export default function TestLabPanel() {
           </div>
         </div>
 
-        {meta && (
+        {meta && activeScenario && (
           <div className="mt-5 rounded-xl border border-border bg-surface-850 p-4">
-            <p className="text-[11px] font-medium tracking-widest uppercase text-text-muted mb-2">Scenario · {meta.scenario.label}</p>
+            <p className="text-[11px] font-medium tracking-widest uppercase text-text-muted mb-2">Scenario · {activeScenario.label}</p>
             <div className="flex flex-wrap gap-2">
-              {meta.scenario.checks.map(item => (
+              {activeScenario.checks.map(item => (
                 <span key={item} className="rounded-full border border-border bg-surface-900 px-3 py-1 text-xs text-text-secondary">{item}</span>
               ))}
             </div>
             <p className="mt-2 text-xs text-text-muted">
-              Detected on this machine: {meta.languages.length ? meta.languages.join(', ') : 'no known toolchains'}
+              {scenario === 'web-search'
+                ? 'Requires SearXNG under Settings → Web search; otherwise the check is skipped.'
+                : `Detected on this machine: ${meta.languages.length ? meta.languages.join(', ') : 'no known toolchains'}`}
             </p>
           </div>
         )}
@@ -349,6 +376,7 @@ export default function TestLabPanel() {
             <h3 className="text-[13px] font-semibold tracking-widest uppercase text-text-secondary">Run {run.id}</h3>
             <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${RUN_STATUS[run.status]}`}>{run.status}</span>
             <span className="text-xs text-text-muted">{run.cli}</span>
+            <span className="rounded-full border border-border bg-surface-850 px-2 py-0.5 text-[10px] uppercase tracking-wider text-text-muted">{scenarioLabel(run.scenario)}</span>
             {run.model && <span className="rounded-full border border-border bg-surface-850 px-2 py-0.5 font-mono text-[11px] text-text-secondary">{run.model}</span>}
             <span className="text-xs text-text-muted">{run.elapsed_sec}s</span>
             <span className="text-xs text-text-muted">{run.shell_count} shell</span>
@@ -441,6 +469,7 @@ export default function TestLabPanel() {
               >
                 <span key="status" className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${RUN_STATUS[item.status]}`}>{item.status}</span>
                 <span className="text-xs text-text-secondary">{item.cli}</span>
+                <span className="text-[11px] text-text-muted">{scenarioLabel(item.scenario)}</span>
                 {item.model && <span className="font-mono text-[11px] text-text-muted">{item.model}</span>}
                 <span className="text-[11px] text-text-muted">{item.elapsed_sec}s</span>
                 <span className="text-[11px] text-text-muted">{item.shell_count} shell</span>

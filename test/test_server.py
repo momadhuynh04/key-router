@@ -174,8 +174,9 @@ def test_api_logging_and_errors(mock_get_provider, capsys):
 # ----------------------------------------
 
 @patch('proxy.server.provider_router.get_provider')
-def test_api_tool_call_session(mock_get_provider):
+def test_api_tool_call_session(mock_get_provider, monkeypatch):
     """Test that a session with tools properly validates schema."""
+    monkeypatch.setattr("proxy.websearch.configured", lambda: False)
     mock_provider = AsyncMock()
     
     translated_called_with = []

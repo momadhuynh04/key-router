@@ -20,6 +20,7 @@ type BaseUrlRow = {
 type SettingsData = {
   keys: KeyRow[]
   base_urls: BaseUrlRow[]
+  web_search: { searxng_url: string }
   secrets_path: string
 }
 
@@ -60,6 +61,7 @@ export default function SettingsPanel({ onOpenProviders, onKeysChanged }: {
   const [data, setData] = useState<SettingsData | null>(null)
   const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({})
   const [baseDrafts, setBaseDrafts] = useState<Record<string, string>>({})
+  const [webSearchDraft, setWebSearchDraft] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState("")
   const [notice, setNotice] = useState("")
@@ -122,6 +124,19 @@ export default function SettingsPanel({ onOpenProviders, onKeysChanged }: {
     await mutate(`/api/settings/base-urls/${encodeURIComponent(row.id)}`, 'DELETE', undefined, 'Base URL reset to default.')
   }
 
+  const saveWebSearch = async () => {
+    const value = (webSearchDraft ?? data?.web_search.searxng_url ?? '').trim()
+    if (!value) return
+    const ok = await mutate('/api/settings/web-search', 'PUT', { value }, 'Web search configured. Applied on the next request.')
+    if (ok) setWebSearchDraft(null)
+  }
+
+  const resetWebSearch = async () => {
+    if (!confirm('Disable web search and remove the SearXNG URL?')) return
+    await mutate('/api/settings/web-search', 'DELETE', undefined, 'Web search disabled.')
+    setWebSearchDraft(null)
+  }
+
   if (!data) {
     return (
       <div className="rounded-2xl border border-border bg-surface-900 p-6 text-sm text-text-muted">
@@ -132,6 +147,44 @@ export default function SettingsPanel({ onOpenProviders, onKeysChanged }: {
 
   const builtinKeys = data.keys.filter(k => k.scope === 'builtin')
   const customKeys = data.keys.filter(k => k.scope === 'custom')
+
+  const setupGuide = (
+    <>
+      <div>
+        <p className="text-xs font-medium uppercase tracking-widest text-text-muted">Windows (Docker Desktop)</p>
+        <ol className="mt-1 list-decimal space-y-1 pl-5">
+          <li>Install <span className="text-text-primary">Docker Desktop</span> and start it (WSL 2 backend is fine).</li>
+          <li>
+            In PowerShell or CMD:
+            <code className="mt-1 block overflow-x-auto rounded border border-border bg-surface-900 px-2 py-1 font-mono text-[11px]">
+              docker run -d --name keyrouter-searxng -p 8888:8080 --restart=always searxng/searxng:latest
+            </code>
+          </li>
+          <li>Make sure Docker shows the container as running, then save <code className="font-mono text-xs">http://127.0.0.1:8888</code> above.</li>
+          <li>If port 8888 is taken, change the left side (e.g. <code className="font-mono text-xs">-p 8899:8080</code>) and save the matching URL.</li>
+        </ol>
+      </div>
+
+      <div>
+        <p className="text-xs font-medium uppercase tracking-widest text-text-muted">Linux (Podman or Docker)</p>
+        <code className="mt-1 block overflow-x-auto rounded border border-border bg-surface-900 px-2 py-1 font-mono text-[11px]">
+          podman run -d --name keyrouter-searxng -p 8888:8080 --restart=always docker.io/searxng/searxng:latest
+        </code>
+        <p className="mt-1">
+          Prefer a native install or another platform? Follow the{' '}
+          <a
+            href="https://docs.searxng.org/admin/installation-searxng.html#installation-basic"
+            target="_blank"
+            rel="noreferrer"
+            className="text-brand underline-offset-2 hover:underline"
+          >
+            official SearXNG installation guide
+          </a>
+          . Then save the URL above.
+        </p>
+      </div>
+    </>
+  )
 
   const renderKeyRow = (key: KeyRow) => {
     const draftKey = `${key.scope}:${key.id}`
@@ -237,6 +290,61 @@ export default function SettingsPanel({ onOpenProviders, onKeysChanged }: {
             )
           })}
         </div>
+      </div>
+
+      <div className="rounded-2xl border border-border bg-surface-900 p-5 lg:p-6">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-[13px] font-semibold tracking-widest uppercase text-text-secondary">Web search</h2>
+            <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-text-secondary">
+              The model's <code className="rounded border border-border bg-surface-850 px-1.5 py-0.5 font-mono text-xs">web_search</code> tool
+              is served by your own SearXNG instance — no third-party search API and no key.
+            </p>
+          </div>
+          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
+            data.web_search.searxng_url
+              ? 'border-success/30 bg-success/10 text-success'
+              : 'border-border bg-surface-850 text-text-muted'
+          }`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${data.web_search.searxng_url ? 'bg-success' : 'bg-text-muted'}`} />
+            {data.web_search.searxng_url ? 'Configured' : 'Not configured'}
+          </span>
+        </div>
+
+        <div className="grid gap-3 rounded-xl border border-border bg-surface-850 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] lg:items-end">
+          <div className="min-w-0">
+            <label className={labelCls}>SearXNG URL</label>
+            <p className="font-mono text-[11px] text-text-muted break-all">Base URL, e.g. http://127.0.0.1:8888</p>
+          </div>
+          <input
+            value={webSearchDraft ?? data.web_search.searxng_url}
+            onChange={e => setWebSearchDraft(e.target.value)}
+            placeholder="http://127.0.0.1:8888"
+            autoComplete="off"
+            className={inputCls}
+          />
+          <div className="flex items-center gap-2">
+            <button onClick={saveWebSearch} disabled={busy !== null || !(webSearchDraft ?? data.web_search.searxng_url).trim()} className="h-9 rounded-full bg-brand px-4 text-xs font-medium text-white transition-colors hover:bg-brand-muted disabled:cursor-not-allowed disabled:opacity-40">Save</button>
+            <button onClick={resetWebSearch} disabled={busy !== null || !data.web_search.searxng_url} className="h-9 rounded-full border border-border bg-surface-900 px-4 text-xs font-medium text-text-muted transition-colors hover:text-danger disabled:cursor-not-allowed disabled:opacity-40">Remove</button>
+          </div>
+        </div>
+
+        {data.web_search.searxng_url ? (
+          <details className="mt-3 rounded-xl border border-border bg-surface-850 px-4 py-3 text-sm leading-relaxed text-text-secondary">
+            <summary className="cursor-pointer text-xs font-medium uppercase tracking-widest text-text-muted">Setup instructions</summary>
+            <div className="mt-3 space-y-3">{setupGuide}</div>
+          </details>
+        ) : (
+          <div className="mt-3 space-y-3 rounded-xl border border-dashed border-border bg-surface-850 px-4 py-3 text-sm leading-relaxed text-text-secondary">
+            <p className="font-medium text-text-primary">
+              SearXNG is not running yet — <code className="font-mono text-xs">web_search</code> stays off until you add a URL.
+            </p>
+            {setupGuide}
+            <p className="text-xs text-text-muted">
+              The URL applies on the next request — no restart. Remove it to switch the tool off.
+            </p>
+          </div>
+        )}
       </div>
 
       {error && <div className="rounded-lg border border-danger/20 bg-danger/10 p-3 text-sm text-danger">{error}</div>}

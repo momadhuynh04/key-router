@@ -74,6 +74,17 @@ matching section here. Releases before 0.1.32 are tracked in git history (`git l
 - **Tools page install states** — a tool whose folder is missing renders greyed out as
   **not installed** with an **Install** action (a corrupt install keeps **Reinstall**). The
   in-dashboard add-tool form was removed; tools are registered personally.
+- **Built-in web search** — key-router exposes its own `web_search` function tool on both
+  ingresses (`/v1/responses` and `/v1/messages`). Queries go to a **self-hosted SearXNG** instance
+  configured in Settings → Web search (`secrets.json::web_search.searxng_url`); there is no
+  third-party search API and no key, and no scraper fallback — without a URL the tool stays off and
+  says so. The tool loop runs in-process, so the model searches and the client only sees the final
+  answer. Capped at three searches per turn. Calls a client makes to its own `WebSearch` tool are
+  intercepted too, so Claude Code's permission gate never sees them.
+- **Test lab web search scenario** — the Test lab runs one headless turn per scenario; the new
+  `web-search` scenario asks the agent to search twice and write a sourced report, then checks the
+  cited URLs (skipped when SearXNG is not configured). Pick it with the scenario chips next to the
+  Claude Code/Codex lane selector.
 
 ## [0.1.33] — 2026-11-04
 
